@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { prisma } from "@/lib/prisma"
-import { getMachineInfo } from "@/lib/machines"
+import { getMachineInfo, versionBelow } from "@/lib/machines"
+import { AGENT_VERSION } from "@/lib/install-file"
 
 export const dynamic = "force-dynamic"
 
@@ -54,7 +55,12 @@ export default async function MachinesPage() {
                   </td>
                   <td className="data-mono">{m.address}:{m.port}</td>
                   <td>{r.ok ? r.data.host.hostname : m.hostname ?? "—"}</td>
-                  <td>{r.ok ? r.data.agent.version : m.agentVersion ?? "—"}</td>
+                  <td>
+                    {r.ok ? r.data.agent.version : m.agentVersion ?? "—"}
+                    {r.ok && versionBelow(r.data.agent.version, AGENT_VERSION) && (
+                      <div className="data-note">update available ({AGENT_VERSION})</div>
+                    )}
+                  </td>
                   <td>{ago(seen)}</td>
                 </tr>
               )

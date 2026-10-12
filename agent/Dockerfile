@@ -9,7 +9,7 @@ RUN npm ci --no-audit --no-fund
 COPY tsconfig.json ./
 COPY src ./src
 COPY test ./test
-# The tests (root guard, host identity, files, search) run here: a failure stops the build.
+# The tests (root guard, host identity, files, search, commands) run here: a failure stops the build.
 RUN npm run build && npm test
 
 # Runtime: Node, the compiled agent, and ripgrep for project search.
