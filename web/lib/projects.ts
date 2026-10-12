@@ -1,6 +1,7 @@
 import path from "node:path"
 import { prisma } from "./prisma"
 import { getMachineInfo, listMachineDir, recordAction } from "./machines"
+import { ocDeleteSession } from "./opencode"
 
 // Projects: a folder on a paired machine that OpenCode sessions work in.
 //
@@ -92,8 +93,10 @@ export async function createProject(
 /** Removes a project and MAW's records of its sessions. Nothing on the
  *  machine is touched. */
 export async function removeProject(projectId: string, userId: string | null): Promise<{ ok: true; name: string } | { ok: false; message: string }> {
-  const p = await prisma.project.findUnique({ where: { id: projectId }, include: { machine: true } })
+  const p = await prisma.project.findUnique({ where: { id: projectId }, include: { machine: true, sessions: { select: { id: true } } } })
   if (!p) return { ok: false, message: "This project no longer exists." }
+  // Its conversations in OpenCode go too (best effort: OpenCode may be down).
+  for (const s of p.sessions) await ocDeleteSession(`/workspaces/${p.slug}`, s.id).catch(() => null)
   await prisma.project.delete({ where: { id: p.id } })
   await recordAction(p.machine, userId, "project.remove", p.root, true, `project ${p.name}; its files on ${p.machine.name} are untouched`)
   return { ok: true, name: p.name }
