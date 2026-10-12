@@ -13,9 +13,12 @@ beside llama.cpp (`llama-cpp`, `192.168.4.201:8081`).
 | migrate | maw-migrate | one-shot `prisma migrate deploy`, then exits; `web` waits for it |
 | web | maw-web | Next.js standalone server on :3000 |
 | postgres | maw-postgres | PostgreSQL 16; `127.0.0.1:5434` on the host only |
+| opencode | maw-opencode | OpenCode 1.19.0 server (`opencode serve` on :4096, maw-net only); the 27B on llama.cpp; tools call back into maw-web |
 
 Networks: `maw-net` (internal), `proxy-nw` (external, shared with the edge).
-Volume: `maw-pgdata`.
+Volumes: `maw-pgdata`; `maw-opencode-data` (OpenCode's sessions, plugins,
+provider packages); `maw-workspaces` (one stand-in folder per project,
+shared by opencode, web and migrate).
 
 ## maw-agent (agent/)
 
@@ -72,7 +75,8 @@ containers and can start, stop and restart them and read their logs.
 
 MAW can work in a machine's project folders: read, list, write and edit
 files, search them, and run commands. The machine page's **Console** tries
-all of it by hand; OpenCode (Phase 3) will use the same calls.
+all of it by hand; OpenCode sessions (see Projects and sessions) use the
+same calls through MAW's tool API.
 
 - **Roots.** Every call names a project root, an existing folder inside
   `/opt` (the only host folder the agent mounts). Paths are resolved with
@@ -100,6 +104,78 @@ all of it by hand; OpenCode (Phase 3) will use the same calls.
   `POST /v1/exec`, `GET /v1/exec[/<id>[/stream]]`, `POST /v1/exec/<id>/stop`
   (see `agent/src/server.ts`).
 
+## Projects and sessions (admin only)
+
+A **project** is a folder on a paired machine, such as snax02 `/opt/caw`
+(Projects → Add project; the folder must exist inside `/opt`). A
+**session** is one OpenCode conversation with the 27B in a project: read
+it, prompt it, watch it work, abort it.
+
+- **Where things run.** OpenCode runs only in maw-opencode. Every file it
+  reads, writes or searches and every command it runs happens on the
+  project's machine, through maw-web and that machine's agent: MAW's six
+  tools (`read`, `write`, `edit`, `glob`, `grep`, `bash`) replace OpenCode's
+  built-ins and call `POST /api/tools/<tool>` on maw-web (Bearer
+  `MAW_TOOLS_TOKEN`), which maps paths into the project root and calls the
+  agent. Answers have OpenCode's own formats; bash output streams live.
+- **Workspaces.** Each project has `/workspaces/<slug>` in maw-opencode
+  (`<machine>-<folder>`, e.g. `snax02-caw`), a stand-in folder OpenCode
+  works "in". When a session starts MAW writes its `AGENTS.md`: where the
+  project really lives, plus the project's own `AGENTS.md` from the machine.
+  Paths relative to the workspace, inside it, or inside the real root all
+  map to the real root; anything else is refused.
+- **No approvals.** Commands, writes and edits run straight away.
+  `MAW_OPENCODE_BASH=ask` / `MAW_OPENCODE_EDIT=ask` in the opencode
+  service's environment would turn OpenCode's approvals on, but MAW does
+  not show approval requests yet.
+- **Recorded.** Writes, edits and commands appear under the machine's Recent
+  actions with the session's user as Who.
+- **Session page** (`/projects/<id>/sessions/<sid>`): the conversation as it
+  happens (OpenCode's events relayed by `/api/sessions/<sid>/events` as
+  NDJSON): prompts, streamed answers, thinking (folded), tool rows with
+  their output, questions the model asks (answer or dismiss), Abort, and a
+  prompt box (a prompt sent while the model works runs after the turn).
+  Under each finished turn: time, steps, context and output tokens.
+- **Dashboard** (`/`): sessions working now (or waiting for an answer), what
+  each is doing, updated every 5 s; recent sessions below. The Projects
+  list and project page show each session's status.
+- **Removing** a session deletes its conversation in OpenCode; removing a
+  project removes its sessions. Files on the machine are never touched.
+
+## maw-opencode (opencode/)
+
+    docker compose build opencode       # image maw-opencode:1.19.0
+    docker compose up -d opencode
+
+- `write-config.mjs` writes `opencode.json` at every start from the
+  service's environment (`docker-compose.yml`, values from `.env`):
+  provider `llamacpp` (`@ai-sdk/openai-compatible`, `LLAMACPP_BASE_URL`,
+  default `http://192.168.4.201:8081/v1`, key `LLAMACPP_API_KEY`), model
+  `LLAMACPP_MODEL` (context 65536, output 16384), compaction (keep 24,000
+  tokens, buffer 10,000), plugin `@tarquinen/opencode-dcp@3.2.0`
+  (`MAW_OPENCODE_DCP=none` in the service's environment drops it), and snapshot, LSP, formatters,
+  sharing, autoupdate, `apply_patch` and `websearch` off.
+- `config/tools/*.ts` are MAW's six tools; their descriptions
+  (`config/maw-lib/descriptions.json`) are OpenCode 1.19.0's, adjusted
+  where MAW differs (fresh login shell per command; last 2,000 lines kept;
+  no binary files).
+- One llama.cpp slot (`N_PARALLEL=1`): MAW sessions, other OpenCode clients
+  and CAW queue behind each other.
+- **Mock model for tests.** `opencode/test/mock-llm.mjs` is an
+  OpenAI-compatible stand-in that calls the tools on cue (`go`: all six;
+  `sleep`: `sleep 30`; `slow`: a streamed answer; `ask`: a question). The
+  step scripts run a test OpenCode (this image) against it and a temporary
+  agent:
+
+      docker compose run --rm --no-deps -e MAW_OPENCODE_URL=… -e MAW_OPENCODE_PASSWORD=… \
+        migrate npx tsx scripts/opencode-selftest.ts mock <machine id> <root>
+
+- **Checks against the real 27B:** `opencode-selftest.ts real <project>`
+  (one read-only prompt; the session is kept), and
+  `phase3-report.ts <project> [hours]` (what sessions in the project did:
+  reads, searches, commands, edits, aborts, their records with Who, and
+  `git diff --stat` on the machine).
+
 ## Routing
 
 The .201 edge (`traefik-edge`, file `/opt/traefik-edge/dynamic.yml`) has
@@ -116,6 +192,11 @@ symlink to `../.env` so host-side Prisma commands run from `web/` see it.
 - `POSTGRES_PASSWORD` — letters and digits only (it is placed in
   `DATABASE_URL` without URL-encoding).
 - `BETTER_AUTH_SECRET` — signs sessions; rotating it signs everyone out.
+- `MAW_TOOLS_TOKEN` — shared by maw-web and maw-opencode for the tool API
+  (at least 32 characters; `openssl rand -hex 32`).
+- `MAW_OPENCODE_PASSWORD` — maw-web signs in to maw-opencode with it.
+- `LLAMACPP_API_KEY` — llama.cpp's key (the llama-cpp container's
+  `LLAMA_API_KEY`); recreate maw-opencode after changing it.
 
 ## First run
 

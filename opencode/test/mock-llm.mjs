@@ -3,6 +3,7 @@
 //   prompt containing "sleep": calls bash `sleep 30` (the test aborts it)
 //   prompt containing "slow": answers after 4 s, streamed in a few pieces
 //   prompt containing "ask": calls OpenCode's question tool (two options)
+//   prompt containing "git status": runs `git status --short --branch`
 //   any other prompt: write → read → edit → glob → grep → bash, then answers
 // Requests without tools (title generation) get a short title.
 import http from "node:http"
@@ -56,7 +57,8 @@ http.createServer((req, res) => {
         done === 0
           ? callTool("question", { questions: [{ question: "Which branch should I use?", header: "Branch", options: [{ label: "main", description: "The main branch" }, { label: "phase3-1", description: "The Phase 3 branch" }] }] })
           : say(`you chose: ${JSON.stringify(msgs.at(-1)?.content ?? "").slice(0, 200)}`)
-      } else if (/sleep/.test(userText)) done === 0 ? callTool("bash", { command: "sleep 30", timeout: 120000 }) : say("stopped")
+      } else if (/git status/.test(userText)) done === 0 ? callTool("bash", { command: "git status --short --branch", timeout: 60000 }) : say("that is the status")
+      else if (/sleep/.test(userText)) done === 0 ? callTool("bash", { command: "sleep 30", timeout: 120000 }) : say("stopped")
       else if (done < STEPS.length) callTool(...STEPS[done])
       else say("## Done\n\ndone: **all six tools ran**")
     }
