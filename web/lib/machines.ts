@@ -183,6 +183,10 @@ export async function reissueMachineCert(
 export async function removeMachine(machineId: string, userId: string | null): Promise<{ ok: true; name: string } | { ok: false; message: string }> {
   const m = await prisma.machine.findUnique({ where: { id: machineId } })
   if (!m) return { ok: false, message: "This machine no longer exists." }
+  const projects = await prisma.project.findMany({ where: { machineId: m.id }, select: { name: true }, orderBy: { name: "asc" } })
+  if (projects.length) {
+    return { ok: false, message: `${m.name} still has project${projects.length === 1 ? "" : "s"} ${projects.map((p) => p.name).join(", ")}. Remove ${projects.length === 1 ? "it" : "them"} first (Projects).` }
+  }
   await recordAction(m, userId, "machine.remove", m.address, true, "removed from MAW; MAW no longer accepts its agent")
   await prisma.machine.deleteMany({ where: { id: m.id } })
   return { ok: true, name: m.name }

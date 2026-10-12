@@ -26,7 +26,10 @@ export default async function MachinePage({ params, searchParams }: {
 }) {
   const { id } = await params
   const rootParam = (await searchParams).root
-  const machine = await prisma.machine.findUnique({ where: { id } })
+  const machine = await prisma.machine.findUnique({
+    where: { id },
+    include: { projects: { select: { id: true, name: true, root: true }, orderBy: { name: "asc" } } },
+  })
   if (!machine) notFound()
 
   const info = await getMachineInfo(machine)
@@ -68,6 +71,17 @@ export default async function MachinePage({ params, searchParams }: {
         </p>
       ) : (
         <div className="form-alert">{info.message}</div>
+      )}
+      {machine.projects.length > 0 && (
+        <p className="machine-projects">
+          Project{machine.projects.length === 1 ? "" : "s"}:{" "}
+          {machine.projects.map((p, i) => (
+            <span key={p.id}>
+              {i > 0 && ", "}
+              <Link href={`/projects/${p.id}`} className="data-link">{p.name}</Link> (<span className="data-mono">{p.root}</span>)
+            </span>
+          ))}
+        </p>
       )}
       {update && (
         <div className="form-alert form-alert-info spaced">

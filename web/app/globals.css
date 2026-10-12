@@ -1154,3 +1154,19 @@ body {
   font-size: 0.8rem;
   cursor: pointer;
 }
+
+/* --- Projects (app/(app)/projects) ----------------------------------- */
+.project-form {
+  max-width: 640px;
+}
+.project-folders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: -0.5rem;
+}
+.machine-projects {
+  margin: -0.75rem 0 1.25rem;
+  font-size: 0.9rem;
+  color: var(--text-muted-color);
+}

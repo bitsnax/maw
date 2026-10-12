@@ -30,6 +30,8 @@ model User {
 
   machinesCreated Machine[]       @relation("MachineCreatedBy")
   machineActions  MachineAction[]
+  projectsCreated Project[]       @relation("ProjectCreatedBy")
+  projectSessions ProjectSession[]
 
   @@map("user")
 }
@@ -120,6 +122,7 @@ model Machine {
   agentVersion    String?
   hostname        String?
   actions         MachineAction[]
+  projects        Project[]
 
   @@map("machine")
 }
@@ -142,4 +145,46 @@ model MachineAction {
   @@index([machineId, createdAt])
   @@index([userId])
   @@map("machine_action")
+}
+
+// ---------------------------------------------------------------------------
+// Projects (Phase 3): a folder on a paired machine that OpenCode sessions
+// work in. `slug` names the project's workspace folder in maw-opencode
+// (/workspaces/<slug>); it never changes once set. A machine with projects
+// cannot be removed (Restrict): remove its projects first.
+// ---------------------------------------------------------------------------
+
+model Project {
+  id          String           @id @default(cuid())
+  name        String           @unique
+  slug        String           @unique
+  machineId   String
+  machine     Machine          @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  root        String
+  createdById String?
+  createdBy   User?            @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  sessions    ProjectSession[]
+
+  @@unique([machineId, root])
+  @@map("project")
+}
+
+// One OpenCode session in a project. `id` is OpenCode's own session id; the
+// messages live in OpenCode (maw-opencode's volume), MAW keeps who started it
+// and when. Removing a project removes its rows (and MAW deletes the
+// sessions in OpenCode too).
+model ProjectSession {
+  id        String   @id
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  title     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, createdAt])
+  @@map("project_session")
 }
