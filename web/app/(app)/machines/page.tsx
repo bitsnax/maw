@@ -48,7 +48,7 @@ export default async function MachinesPage() {
                 <tr key={m.id}>
                   <td>
                     <span className={`status-dot ${r.ok ? "is-online" : "is-offline"}`} aria-hidden="true" />
-                    <span className="data-strong">{m.name}</span>
+                    <Link href={`/machines/${m.id}`} className="data-strong data-link">{m.name}</Link>
                     <span className="sr-only">{r.ok ? " (online)" : " (offline)"}</span>
                     {!r.ok && <div className="data-note">{r.message}</div>}
                   </td>

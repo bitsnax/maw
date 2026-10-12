@@ -17,7 +17,8 @@ import UserMenu from "./UserMenu"
 type NavItem = { href: string; label: string; adminOnly?: boolean }
 
 const NAV: NavItem[] = [
-  { href: "/", label: "Projects" },
+  { href: "/", label: "Dashboard" },
+  { href: "/projects", label: "Projects" },
   { href: "/machines", label: "Machines", adminOnly: true },
 ]
 
