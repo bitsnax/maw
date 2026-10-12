@@ -46,11 +46,13 @@ export function proxy(request: NextRequest) {
 // The matcher decides WHICH requests proxy runs on. We must exclude:
 //   - /login            (or a logged-out user redirects to /login forever)
 //   - /api/auth/*        (the sign-in endpoint must work BEFORE a cookie exists)
+//   - /api/tools/*       (maw-opencode's tools; they carry MAW_TOOLS_TOKEN, checked
+//                         in lib/tools.ts, and never have a sign-in cookie)
 //   - /_next/*           (Next.js build assets — never redirect the JS bundle)
 //   - common static files (favicon, icons, manifest, robots)
 // Everything else requires a session cookie.
 export const config = {
   matcher: [
-    "/((?!login|api/auth|_next/static|_next/image|favicon.ico|favicon-16x16.png|favicon-32x32.png|apple-touch-icon.png|android-chrome-192x192.png|android-chrome-512x512.png|site.webmanifest).*)",
+    "/((?!login|api/auth|api/tools|_next/static|_next/image|favicon.ico|favicon-16x16.png|favicon-32x32.png|apple-touch-icon.png|android-chrome-192x192.png|android-chrome-512x512.png|site.webmanifest).*)",
   ],
 }
