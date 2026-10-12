@@ -6,7 +6,9 @@
  * Driven by phase3-03.sh (run from /opt/maw, in the migrate container):
  *   mock <machine id> <root>
  *       against a test OpenCode whose model is opencode/test/mock-llm.mjs:
- *       write → read → edit → glob → grep → bash, then an aborted `sleep 30`.
+ *       write → read → edit → glob → grep → bash, then an aborted `sleep 30`,
+ *       then (step 04) the session page's live view: streamed text and a
+ *       question answered, as the browser gets them (lib/session-events).
  *       Uses a temporary project (selftest-*), removed at the end.
  *   real <project name>
  *       one read-only prompt to the real 27B in that project (caw on snax02);
@@ -19,7 +21,8 @@ import path from "node:path"
 import { prisma } from "../lib/prisma"
 import { createProject, removeProject } from "../lib/projects"
 import { startSession } from "../lib/sessions"
-import { ocAbort, ocHealth, ocMessages, ocPrompt, ocStatus, type OcMessage, type OcPart } from "../lib/opencode"
+import { ocAbort, ocHealth, ocMessages, ocPrompt, ocQuestionReply, ocStatus, type OcMessage, type OcPart } from "../lib/opencode"
+import { sessionEventStream } from "../lib/session-events"
 import { listMachineCommands, readMachineFile } from "../lib/machines"
 
 let failed = 0
@@ -125,9 +128,71 @@ async function mock(machineId: string, root: string) {
     check("the command was stopped on the machine", state === "stopped", state)
     const w2 = await waitIdle(s.session.directory, s.session.id, 20_000)
     check("the session is idle again", w2.idle)
+
+    console.log("live view (the session page's events)")
+    await liveView(s.session.directory, s.session.id)
   } finally {
     const r = await removeProject(p.project.id, null)
     check("project removed (its OpenCode session deleted too)", r.ok)
+  }
+}
+
+/** Follows the session's NDJSON events (as /api/sessions/<id>/events sends
+ *  them) while the mock streams a slow answer and asks a question. */
+async function liveView(directory: string, id: string) {
+  const ac = new AbortController()
+  const st = await sessionEventStream(directory, id, ac.signal)
+  check("event stream opened", st.ok, st.ok ? undefined : st.message)
+  if (!st.ok) return
+  const events: { type: string; properties?: Record<string, unknown> }[] = []
+  const reader = st.stream.getReader()
+  const dec = new TextDecoder()
+  let buf = ""
+  const pump = (async () => {
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) return
+        buf += dec.decode(value, { stream: true })
+        let nl: number
+        while ((nl = buf.indexOf("\n")) >= 0) { events.push(JSON.parse(buf.slice(0, nl))); buf = buf.slice(nl + 1) }
+      }
+    } catch { /* aborted */ }
+  })()
+  const waitFor = async (pred: () => boolean, ms: number) => { const t0 = Date.now(); while (!pred() && Date.now() - t0 < ms) await sleep(100); return pred() }
+  const since = (n: number) => events.slice(n)
+  try {
+    check("ready first", await waitFor(() => events.length > 0, 5000) && events[0]!.type === "ready", events[0])
+
+    let n = events.length
+    await ocPrompt(directory, id, "slow")
+    const idleAgain = () => since(n).some((e) => e.type === "session.idle")
+    await waitFor(idleAgain, 30_000)
+    const ev = since(n)
+    const deltas = ev.filter((e) => e.type === "message.part.delta").map((e) => String(e.properties?.delta ?? ""))
+    check("busy, streamed text in pieces, then idle",
+      ev.some((e) => e.type === "session.status" && (e.properties?.status as { type?: string })?.type === "busy") && deltas.length >= 2 && idleAgain(),
+      { types: [...new Set(ev.map((e) => e.type))], deltas })
+    check("the pieces make the answer", deltas.join("").includes("came slowly."), deltas.join(""))
+    check("only this session's events", ev.every((e) => !e.properties?.sessionID || e.properties.sessionID === id))
+
+    n = events.length
+    await ocPrompt(directory, id, "ask")
+    await waitFor(() => since(n).some((e) => e.type === "question.asked"), 20_000)
+    const q = since(n).find((e) => e.type === "question.asked")?.properties as { id?: string; questions?: { options?: { label: string }[] }[] } | undefined
+    check("question.asked with the two options", q?.questions?.[0]?.options?.map((o) => o.label).join() === "main,phase3-1", q)
+    if (q?.id) {
+      const r = await ocQuestionReply(directory, q.id, [["phase3-1"]])
+      check("answer accepted", r.ok, r.ok ? undefined : r.message)
+      await waitFor(() => since(n).some((e) => e.type === "session.idle"), 20_000)
+      check("question.replied", since(n).some((e) => e.type === "question.replied"))
+      const ms = await ocMessages(directory, id)
+      const t = ms.ok ? lastText(ms.data) : ""
+      check("the model got the answer", t.includes("phase3-1"), t)
+    }
+  } finally {
+    ac.abort()
+    await Promise.race([pump, sleep(2000)])
   }
 }
 

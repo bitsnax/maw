@@ -64,3 +64,29 @@ export const ocAbort = (directory: string, id: string) => oc<boolean>("POST", `/
 /** Sends a prompt and returns at once (204); the answer arrives as events and messages. */
 export const ocPrompt = (directory: string, id: string, text: string) =>
   oc<null>("POST", `/session/${encodeURIComponent(id)}/prompt_async`, { directory, body: { parts: [{ type: "text", text }] } })
+
+// Questions the model asks with OpenCode's question tool (answered in MAW).
+export type OcQuestion = {
+  id: string; sessionID: string
+  questions: { question: string; header: string; options: { label: string; description: string }[]; multiple?: boolean; custom?: boolean }[]
+  tool?: { messageID: string; callID: string }
+}
+export const ocQuestions = (directory: string) => oc<OcQuestion[]>("GET", "/question", { directory })
+/** answers: one array of chosen labels (or typed text) per question, in order. */
+export const ocQuestionReply = (directory: string, id: string, answers: string[][]) =>
+  oc<boolean>("POST", `/question/${encodeURIComponent(id)}/reply`, { directory, body: { answers } })
+export const ocQuestionReject = (directory: string, id: string) => oc<boolean>("POST", `/question/${encodeURIComponent(id)}/reject`, { directory })
+
+/** OpenCode's event stream for a workspace (server-sent events), unread. */
+export async function ocEvents(directory: string, signal: AbortSignal): Promise<OcResult<Response>> {
+  if (!process.env.MAW_OPENCODE_PASSWORD) return { ok: false, message: "MAW_OPENCODE_PASSWORD is not set in MAW's .env." }
+  try {
+    const h = headers(directory)
+    delete h["content-type"]
+    const res = await fetch(`${OPENCODE_URL}/event`, { headers: { ...h, accept: "text/event-stream" }, signal })
+    if (!res.ok || !res.body) return { ok: false, status: res.status, message: `OpenCode's event stream answered ${res.status}.` }
+    return { ok: true, data: res }
+  } catch (e) {
+    return { ok: false, message: `OpenCode's event stream: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}

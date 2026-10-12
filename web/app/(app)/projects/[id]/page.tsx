@@ -3,6 +3,7 @@ import { notFound } from "next/navigation"
 import { prisma } from "@/lib/prisma"
 import { getMachineInfo } from "@/lib/machines"
 import ProjectSettings from "./ProjectSettings"
+import NewSessionForm from "./NewSessionForm"
 
 export const dynamic = "force-dynamic"
 
@@ -42,6 +43,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       {!info.ok && <div className="form-alert spaced">{info.message}</div>}
 
       <h2 className="section-title">Sessions</h2>
+      <NewSessionForm projectId={project.id} />
       {project.sessions.length === 0 ? (
         <p className="app-empty">No sessions yet.</p>
       ) : (
@@ -50,7 +52,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <tbody>
             {project.sessions.map((s) => (
               <tr key={s.id}>
-                <td>{s.title}</td>
+                <td><Link href={`/projects/${project.id}/sessions/${s.id}`} className="data-link">{s.title}</Link></td>
                 <td className="data-nowrap">{when(s.createdAt)}</td>
                 <td>{s.user?.name || s.user?.email || "—"}</td>
               </tr>
