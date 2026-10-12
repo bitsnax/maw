@@ -142,3 +142,37 @@ export async function runContainerAction(
 export async function getContainerLogs(m: MachineRecord, ref: string, tail = 200): Promise<AgentResult<LogsResult>> {
   return callAgent<LogsResult>(m, "GET", `/v1/containers/${encodeURIComponent(ref)}/logs?tail=${tail}`, { timeoutMs: 20_000 })
 }
+
+// ---- Reissue and remove ------------------------------------------------------
+
+/** New key and certificate for a machine. The stored fingerprint is replaced,
+ *  so the old install file stops working the moment this returns. */
+export async function reissueMachineCert(
+  machineId: string,
+  userId: string | null,
+): Promise<{ ok: true; machine: { id: string; name: string; address: string; port: number; runAs: string }; install: InstallBundle } | { ok: false; message: string }> {
+  const m = await prisma.machine.findUnique({ where: { id: machineId } })
+  if (!m) return { ok: false, message: "This machine no longer exists." }
+  const pki = await getPki()
+  const cert = await issueAgentCert(pki.ca, m.id, m.address)
+  await prisma.machine.update({
+    where: { id: m.id },
+    data: { certFingerprint: cert.fingerprint, certNotAfter: cert.notAfter },
+  })
+  await recordAction(m, userId, "machine.reissue", m.address, true, "new certificate; the previous install file no longer works")
+  return {
+    ok: true,
+    machine: { id: m.id, name: m.name, address: m.address, port: m.port, runAs: m.runAs },
+    install: { machineId: m.id, certPem: cert.certPem, keyPem: cert.keyPem, caPem: pki.ca.certPem },
+  }
+}
+
+/** Removes the machine from MAW. Its action records stay (machine name kept);
+ *  the agent keeps running on the machine until it is stopped there. */
+export async function removeMachine(machineId: string, userId: string | null): Promise<{ ok: true; name: string } | { ok: false; message: string }> {
+  const m = await prisma.machine.findUnique({ where: { id: machineId } })
+  if (!m) return { ok: false, message: "This machine no longer exists." }
+  await recordAction(m, userId, "machine.remove", m.address, true, "removed from MAW; MAW no longer accepts its agent")
+  await prisma.machine.deleteMany({ where: { id: m.id } })
+  return { ok: true, name: m.name }
+}

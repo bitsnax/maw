@@ -26,6 +26,36 @@ runtime dependencies. Built here, never run by this stack:
     docker compose --profile agent build agent          # image maw-agent:0.1.0
     docker save maw-agent:0.1.0 | ssh 192.168.4.202 docker load
 
+## Machines (admin only)
+
+A machine is paired by running maw-agent on it; MAW then lists its
+containers and can start, stop and restart them and read their logs.
+
+- **Trust.** MAW has its own certificate authority (table `pki`, keys
+  encrypted with `MAW_ENCRYPTION_KEY` — never change that value once a
+  machine is paired). Each machine gets a certificate whose fingerprint MAW
+  stores; its private key exists only in the machine's install file. MAW
+  and the agent check each other on every call (mutual TLS, one fresh
+  connection per call).
+- **Add machine** (Machines → Add machine) shows the install file once.
+  On the machine:
+
+      docker save maw-agent:0.1.0 | ssh <address> docker load   # from .201, other machines only
+      sudo mkdir -p /opt/maw-agent && sudo chown $(id -un) /opt/maw-agent
+      # save the file as /opt/maw-agent/compose.yaml
+      cd /opt/maw-agent && docker compose up -d
+
+- **Reissue certificate** (machine page → Machine settings): new key and
+  install file; the old file stops working at once. Replace the file on
+  the machine and run `docker compose up -d --force-recreate`.
+- **Remove machine**: typed confirmation; MAW stops accepting the agent and
+  keeps its action history. Stop the agent on the machine with
+  `cd /opt/maw-agent && docker compose down`.
+- **Agent updates**: rebuild here (`docker compose --profile agent build
+  agent`), copy the image as above, `docker compose up -d` on each machine.
+- Every action sent to a machine is recorded (`machine_action`: who, when,
+  what, result) and shown under Recent actions.
+
 ## Routing
 
 The .201 edge (`traefik-edge`, file `/opt/traefik-edge/dynamic.yml`) has

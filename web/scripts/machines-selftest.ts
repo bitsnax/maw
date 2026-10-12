@@ -5,9 +5,12 @@
  * first use), and a temporary machine named selftest-<time>, removed by
  * `cleanup`.
  *
- * Driven by machines-05.sh in three calls (run from /opt/maw):
+ * Driven by machines-05.sh / machines-08.sh (run from /opt/maw):
  *   issue <out dir>  create the temporary machine; write its install values
  *   check <machine id> <test container name>
+ *   info <machine id>            the agent answers (after a restart)
+ *   reissue <machine id> <out>   new certificate; the running (old) agent is refused
+ *   remove <machine id>          removed; its action records are kept
  *   cleanup          remove selftest machines and their action records
  */
 
@@ -18,6 +21,7 @@ import { getPki } from "../lib/pki-store"
 import { decryptSecret } from "../lib/crypto"
 import {
   createMachine, getMachineInfo, getMachineContainers, runContainerAction, getContainerLogs, checkMachineInput,
+  reissueMachineCert, removeMachine,
 } from "../lib/machines"
 
 let failed = 0
@@ -81,6 +85,41 @@ async function checkAgent(id: string, testCtr: string) {
     badName.ok ? "accepted" : badName.message)
 }
 
+async function info(id: string) {
+  const m = await prisma.machine.findUniqueOrThrow({ where: { id } })
+  const r = await getMachineInfo(m)
+  check("the agent answers MAW", r.ok, r.ok ? `${r.data.host.hostname}, agent ${r.data.agent.version}` : r.message)
+}
+
+async function reissue(id: string, out: string) {
+  const before = await prisma.machine.findUniqueOrThrow({ where: { id } })
+  const r = await reissueMachineCert(id, null)
+  if (!r.ok) throw new Error(r.message)
+  const after = await prisma.machine.findUniqueOrThrow({ where: { id } })
+  check("new fingerprint stored", after.certFingerprint !== before.certFingerprint)
+  check("same machine id in the new certificate", r.install.machineId === id)
+  const old = await getMachineInfo(after)
+  check("the agent still holding the old certificate is refused", !old.ok && old.message.includes("not the one paired"),
+    old.ok ? "accepted" : old.message)
+  writeFileSync(join(out, "id"), r.install.machineId)
+  writeFileSync(join(out, "agent.pem"), r.install.certPem)
+  writeFileSync(join(out, "agent.key"), r.install.keyPem, { mode: 0o644 })
+  writeFileSync(join(out, "ca.pem"), r.install.caPem)
+}
+
+async function remove(id: string) {
+  const m = await prisma.machine.findUniqueOrThrow({ where: { id } })
+  const r = await removeMachine(id, null)
+  check("machine removed", r.ok && !(await prisma.machine.findUnique({ where: { id } })))
+  const kept = await prisma.machineAction.findMany({ where: { machineName: m.name }, orderBy: { createdAt: "asc" } })
+  check("its action records are kept, with the machine name",
+    kept.length >= 3 && kept.every((a) => a.machineId === null),
+    kept.map((a) => a.action).join(" "))
+  check("removal and reissue recorded",
+    kept.some((a) => a.action === "machine.remove") && kept.some((a) => a.action === "machine.reissue"))
+  check("removing again says so", !(await removeMachine(id, null)).ok)
+}
+
 async function cleanup() {
   const machines = await prisma.machine.findMany({ where: { name: { startsWith: "selftest-" } }, select: { id: true } })
   await prisma.machineAction.deleteMany({ where: { machineName: { startsWith: "selftest-" } } })
@@ -92,8 +131,11 @@ async function main() {
   const [cmd, a, b] = process.argv.slice(2)
   if (cmd === "issue" && a) await issue(a)
   else if (cmd === "check" && a && b) await checkAgent(a, b)
+  else if (cmd === "info" && a) await info(a)
+  else if (cmd === "reissue" && a && b) await reissue(a, b)
+  else if (cmd === "remove" && a) await remove(a)
   else if (cmd === "cleanup") await cleanup()
-  else throw new Error("usage: machines-selftest.ts issue <dir> | check <id> <container> | cleanup")
+  else throw new Error("usage: machines-selftest.ts issue <dir> | check <id> <container> | info <id> | reissue <id> <dir> | remove <id> | cleanup")
   if (cmd !== "cleanup") console.log(failed === 0 ? "PASS" : `FAIL (${failed})`)
   await prisma.$disconnect()
   process.exit(failed === 0 ? 0 : 1)

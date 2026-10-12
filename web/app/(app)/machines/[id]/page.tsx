@@ -3,6 +3,7 @@ import { notFound } from "next/navigation"
 import { prisma } from "@/lib/prisma"
 import { getMachineInfo, getMachineContainers } from "@/lib/machines"
 import Containers from "./Containers"
+import MachineSettings from "./MachineSettings"
 
 export const dynamic = "force-dynamic"
 
@@ -85,6 +86,9 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
           </tbody>
         </table>
       )}
+
+      <h2 className="section-title">Machine settings</h2>
+      <MachineSettings machineId={machine.id} name={machine.name} />
     </>
   )
 }

@@ -862,3 +862,42 @@ body {
 .log-err {
   color: #ffb4a8;
 }
+
+/* --- Machine settings (app/(app)/machines/[id]/MachineSettings.tsx) -- */
+.settings-card {
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  padding: 0.25rem 1rem;
+}
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--surface-border);
+}
+.settings-row:last-child {
+  border-bottom: none;
+}
+.settings-title {
+  font-weight: 650;
+  font-size: 0.92rem;
+  color: var(--text-title-color);
+}
+.settings-text {
+  margin-top: 0.2rem;
+  max-width: 640px;
+  font-size: 0.85rem;
+  color: var(--text-muted-color);
+}
+.settings-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+.settings-confirm {
+  margin-top: 0.75rem;
+  max-width: 320px;
+}
