@@ -3,14 +3,14 @@
 #
 # Topology: the .201 edge Traefik owns host :80/:443 and SNI-passthroughs
 # maw.lan.arpa to THIS stack's traefik over the shared proxy-nw network:
-#   edge  tcp/websecure  HostSNI(maw.lan.arpa) passthrough -> maw-traefik:443
-#   edge  http/web       ACME challenge                     -> maw-traefik:80
-# maw-traefik terminates its own TLS (step-ca ACME) and binds NO host ports.
+#   edge  tcp/websecure  HostSNI(maw.lan.arpa) passthrough -> traefik-maw:443
+#   edge  http/web       ACME challenge                     -> traefik-maw:80
+# traefik-maw terminates its own TLS (step-ca ACME) and binds NO host ports.
 
 services:
   traefik:
     image: traefik:v3.6.7
-    container_name: maw-traefik
+    container_name: traefik-maw
     restart: unless-stopped
     # Resolve *.lan.arpa (ca.lan.arpa for ACME) via the infra dnsmasq.
     dns:
@@ -109,7 +109,7 @@ services:
 networks:
   maw-net:
     name: maw-net
-  # Shared with the edge Traefik so it can reach maw-traefik by name.
+  # Shared with the edge Traefik so it can reach traefik-maw by name.
   proxy-nw:
     external: true
     name: proxy-nw

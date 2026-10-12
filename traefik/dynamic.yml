@@ -1,4 +1,4 @@
-# maw routing (file provider). maw-traefik terminates TLS for maw.lan.arpa
+# maw routing (file provider). traefik-maw terminates TLS for maw.lan.arpa
 # and forwards to the web container on :3000.
 
 http:

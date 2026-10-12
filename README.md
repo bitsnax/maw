@@ -9,7 +9,7 @@ beside llama.cpp (`llama-cpp`, `192.168.4.201:8081`).
 
 | Service | Container | Role |
 |---|---|---|
-| traefik | maw-traefik | TLS for maw.lan.arpa; no host ports; reached by the .201 edge over `proxy-nw` |
+| traefik | traefik-maw | TLS for maw.lan.arpa; no host ports; reached by the .201 edge over `proxy-nw` |
 | migrate | maw-migrate | one-shot `prisma migrate deploy`, then exits; `web` waits for it |
 | web | maw-web | Next.js standalone server on :3000 |
 | postgres | maw-postgres | PostgreSQL 16; `127.0.0.1:5434` on the host only |
@@ -21,8 +21,8 @@ Volume: `maw-pgdata`.
 
 The .201 edge (`traefik-edge`, file `/opt/traefik-edge/dynamic.yml`) has
 three `maw-*` routers (and their services): TCP `maw-https` passes `maw.lan.arpa` through to
-`maw-traefik:443`; HTTP `maw-acme` sends ACME challenges to
-`maw-traefik:80`; `maw-http` redirects plain HTTP to HTTPS. dnsmasq on .200
+`traefik-maw:443`; HTTP `maw-acme` sends ACME challenges to
+`traefik-maw:80`; `maw-http` redirects plain HTTP to HTTPS. dnsmasq on .200
 (`/opt/lan-dns/hosts/lan.hosts`) answers `maw.lan.arpa → 192.168.4.201`.
 
 ## Secrets (.env)
