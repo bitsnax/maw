@@ -1388,3 +1388,96 @@ body {
 .chat-tool.is-stopped .chat-tool-status {
   color: var(--text-muted-color);
 }
+
+/* --- Dashboard (app/(app)/DashboardLive.tsx) ------------------------- */
+.dash-active {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+.dash-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--surface-border);
+  border-left: 3px solid #3b5bdb;
+  border-radius: 10px;
+  background: var(--surface-bg);
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+.dash-card:hover {
+  border-color: #c9d4ff;
+  border-left-color: #3b5bdb;
+}
+.dash-card.is-waiting {
+  border-left-color: #b54708;
+}
+.dash-card.is-retry {
+  border-left-color: #b42318;
+}
+.dash-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.dash-card-title {
+  font-weight: 650;
+  color: var(--text-title-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-state {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #3b5bdb;
+}
+.dash-state.is-waiting {
+  color: #b54708;
+}
+.dash-state.is-retry {
+  color: #b42318;
+}
+.dash-card-meta,
+.dash-muted {
+  font-size: 0.82rem;
+  color: var(--text-muted-color);
+}
+.dash-card-activity {
+  font-size: 0.8rem;
+  color: var(--text-title-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-card-note {
+  font-size: 0.8rem;
+  color: #b42318;
+}
+.session-state {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #3b5bdb;
+}
+.session-state.is-waiting {
+  color: #b54708;
+}
+.session-state.is-retry {
+  color: #b42318;
+}
+.session-state.is-idle {
+  font-weight: 400;
+  color: var(--text-muted-color);
+}
+.chat-turn {
+  font-size: 0.75rem;
+  color: var(--text-muted-color);
+}
+.chat-text strong {
+  font-weight: 650;
+}

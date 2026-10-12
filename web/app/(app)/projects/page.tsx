@@ -1,6 +1,8 @@
 import Link from "next/link"
+import { prisma } from "@/lib/prisma"
 import { getMachineInfo } from "@/lib/machines"
 import { listProjects } from "@/lib/projects"
+import { liveStates } from "@/lib/session-status"
 
 export const dynamic = "force-dynamic"
 
@@ -15,7 +17,13 @@ function when(d: Date) {
 export default async function ProjectsPage() {
   const projects = await listProjects()
   const machines = [...new Map(projects.map((p) => [p.machine.id, p.machine])).values()]
-  const online = new Map(await Promise.all(machines.map(async (m) => [m.id, (await getMachineInfo(m)).ok] as const)))
+  const [online, live] = await Promise.all([
+    Promise.all(machines.map(async (m) => [m.id, (await getMachineInfo(m)).ok] as const)).then((e) => new Map(e)),
+    liveStates(),
+  ])
+  const sessionsOf = await prisma.projectSession.findMany({ select: { id: true, projectId: true } })
+  const active = new Map<string, number>()
+  for (const s of sessionsOf) if (live.states.has(s.id)) active.set(s.projectId, (active.get(s.projectId) ?? 0) + 1)
 
   return (
     <>
@@ -43,7 +51,7 @@ export default async function ProjectsPage() {
                     <span className="sr-only">{up ? " (online)" : " (offline)"}</span>
                   </td>
                   <td className="data-mono">{p.root}</td>
-                  <td>{p._count.sessions}</td>
+                  <td>{p._count.sessions}{active.get(p.id) ? <span className="session-state"> · {active.get(p.id)} active</span> : null}</td>
                   <td className="data-nowrap">{when(p.createdAt)}</td>
                 </tr>
               )

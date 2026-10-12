@@ -1,11 +1,18 @@
-// Dashboard: what is running now. OpenCode sessions started from a project
-// appear here (Phase 3). Setup lives in Projects and Machines.
+import { adminSession } from "@/lib/admin-session"
+import DashboardLive from "./DashboardLive"
+import { dashboardSnapshot } from "./dashboard-actions"
 
-export default function Dashboard() {
+// Dashboard: what is running now — OpenCode sessions working, or waiting for
+// an answer — and recent sessions. Setup lives in Projects and Machines.
+
+export const dynamic = "force-dynamic"
+
+export default async function Dashboard() {
+  const admin = await adminSession()
   return (
     <>
       <h1 className="app-title">Dashboard</h1>
-      <p className="app-empty">Nothing is running. Sessions you start from a project appear here.</p>
+      {admin ? <DashboardLive initial={await dashboardSnapshot()} /> : <p className="app-empty">Nothing to show: sessions are shown to admins.</p>}
     </>
   )
 }

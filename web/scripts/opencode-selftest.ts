@@ -23,6 +23,7 @@ import { createProject, removeProject } from "../lib/projects"
 import { startSession } from "../lib/sessions"
 import { ocAbort, ocHealth, ocMessages, ocPrompt, ocQuestionReply, ocStatus, type OcMessage, type OcPart } from "../lib/opencode"
 import { sessionEventStream } from "../lib/session-events"
+import { liveStates } from "../lib/session-status"
 import { listMachineCommands, readMachineFile } from "../lib/machines"
 
 let failed = 0
@@ -116,6 +117,9 @@ async function mock(machineId: string, root: string) {
       running = m2.ok && toolParts(m2.data).some((t) => t.state?.input?.command === "sleep 30" && t.state?.status === "running")
     }
     check("bash `sleep 30` is running on the machine", running)
+    const ls = await liveStates([p.project.id])
+    const l = ls.states.get(s.session.id)
+    check("Dashboard: working, on Command: sleep 30", l?.state === "working" && l.activity === "Command: sleep 30" && !!l.since, l ?? ls.unreachable)
     await sleep(1000)
     const ab = await ocAbort(s.session.directory, s.session.id)
     check("Abort accepted", ab.ok, ab.ok ? undefined : ab.message)
@@ -128,9 +132,10 @@ async function mock(machineId: string, root: string) {
     check("the command was stopped on the machine", state === "stopped", state)
     const w2 = await waitIdle(s.session.directory, s.session.id, 20_000)
     check("the session is idle again", w2.idle)
+    check("Dashboard: idle sessions are left out", !(await liveStates([p.project.id])).states.has(s.session.id))
 
     console.log("live view (the session page's events)")
-    await liveView(s.session.directory, s.session.id)
+    await liveView(s.session.directory, s.session.id, p.project.id)
   } finally {
     const r = await removeProject(p.project.id, null)
     check("project removed (its OpenCode session deleted too)", r.ok)
@@ -139,7 +144,7 @@ async function mock(machineId: string, root: string) {
 
 /** Follows the session's NDJSON events (as /api/sessions/<id>/events sends
  *  them) while the mock streams a slow answer and asks a question. */
-async function liveView(directory: string, id: string) {
+async function liveView(directory: string, id: string, projectId: string) {
   const ac = new AbortController()
   const st = await sessionEventStream(directory, id, ac.signal)
   check("event stream opened", st.ok, st.ok ? undefined : st.message)
@@ -181,6 +186,8 @@ async function liveView(directory: string, id: string) {
     await waitFor(() => since(n).some((e) => e.type === "question.asked"), 20_000)
     const q = since(n).find((e) => e.type === "question.asked")?.properties as { id?: string; questions?: { options?: { label: string }[] }[] } | undefined
     check("question.asked with the two options", q?.questions?.[0]?.options?.map((o) => o.label).join() === "main,phase3-1", q)
+    const lq = (await liveStates([projectId])).states.get(id)
+    check("Dashboard: waiting for you while the question is open", lq?.state === "waiting", lq)
     if (q?.id) {
       const r = await ocQuestionReply(directory, q.id, [["phase3-1"]])
       check("answer accepted", r.ok, r.ok ? undefined : r.message)

@@ -13,7 +13,11 @@ export type OcPart = {
   text?: string; tool?: string; callID?: string
   state?: { status: string; input?: Record<string, unknown>; output?: string; error?: string; title?: string; metadata?: Record<string, unknown> }
 }
-export type OcMessage = { info: { id: string; role: "user" | "assistant"; sessionID: string; time: { created: number; completed?: number }; error?: unknown }; parts: OcPart[] }
+export type OcTokens = { input: number; output: number; reasoning: number; cache: { read: number; write: number } }
+export type OcMessage = {
+  info: { id: string; role: "user" | "assistant"; sessionID: string; time: { created: number; completed?: number }; error?: unknown; tokens?: OcTokens }
+  parts: OcPart[]
+}
 
 function headers(directory?: string): Record<string, string> {
   const pw = process.env.MAW_OPENCODE_PASSWORD ?? ""
@@ -58,8 +62,12 @@ export const ocHealth = () => oc<{ healthy: boolean; version: string }>("GET", "
 // folder's instance (and, once after a fresh start, installs its plugins).
 export const ocCreateSession = (directory: string, title: string) => oc<OcSession>("POST", "/session", { directory, body: { title }, timeoutMs: 120_000 })
 export const ocDeleteSession = (directory: string, id: string) => oc<boolean>("DELETE", `/session/${encodeURIComponent(id)}`, { directory })
-export const ocMessages = (directory: string, id: string) => oc<OcMessage[]>("GET", `/session/${encodeURIComponent(id)}/message`, { directory, timeoutMs: 30_000 })
-export const ocStatus = (directory: string) => oc<Record<string, { type: string }>>("GET", "/session/status", { directory })
+/** The conversation, oldest first; with limit, only the last `limit` messages. */
+export const ocMessages = (directory: string, id: string, limit?: number) =>
+  oc<OcMessage[]>("GET", `/session/${encodeURIComponent(id)}/message${limit ? `?limit=${limit}` : ""}`, { directory, timeoutMs: 30_000 })
+/** Sessions that are not idle in a workspace: busy, or retry (with the provider's message). */
+export const ocStatus = (directory: string, timeoutMs?: number) =>
+  oc<Record<string, { type: string; attempt?: number; message?: string; next?: number }>>("GET", "/session/status", { directory, timeoutMs })
 export const ocAbort = (directory: string, id: string) => oc<boolean>("POST", `/session/${encodeURIComponent(id)}/abort`, { directory })
 /** Sends a prompt and returns at once (204); the answer arrives as events and messages. */
 export const ocPrompt = (directory: string, id: string, text: string) =>
@@ -71,7 +79,7 @@ export type OcQuestion = {
   questions: { question: string; header: string; options: { label: string; description: string }[]; multiple?: boolean; custom?: boolean }[]
   tool?: { messageID: string; callID: string }
 }
-export const ocQuestions = (directory: string) => oc<OcQuestion[]>("GET", "/question", { directory })
+export const ocQuestions = (directory: string, timeoutMs?: number) => oc<OcQuestion[]>("GET", "/question", { directory, timeoutMs })
 /** answers: one array of chosen labels (or typed text) per question, in order. */
 export const ocQuestionReply = (directory: string, id: string, answers: string[][]) =>
   oc<boolean>("POST", `/question/${encodeURIComponent(id)}/reply`, { directory, body: { answers } })

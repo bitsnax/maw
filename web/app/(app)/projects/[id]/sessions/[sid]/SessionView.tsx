@@ -214,7 +214,9 @@ export default function SessionView({ sessionId, title, root, machineName }: {
       {msgs !== null && msgs.length === 0 && <p className="app-empty">No messages yet. Write the first prompt below.</p>}
 
       <div className="chat-list">
-        {(msgs ?? []).map((m) => <Message key={m.info.id} m={m} />)}
+        {(msgs ?? []).map((m, i, all) => (
+          <Message key={m.info.id} m={m} footer={turnFooter(all, i, busy)} />
+        ))}
       </div>
 
       {questions.map((q) => (
@@ -248,7 +250,30 @@ export default function SessionView({ sessionId, title, root, machineName }: {
 
 // ---- messages ----------------------------------------------------------------
 
-function Message({ m }: { m: Msg }) {
+const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+
+/** Under the last answer of a finished turn: how long it took and the tokens. */
+function turnFooter(all: Msg[], i: number, busy: boolean): string | null {
+  const m = all[i]!
+  if (m.info.role !== "assistant" || !m.info.time.completed) return null
+  const next = all[i + 1]
+  if (next ? next.info.role !== "user" : busy) return null
+  let start = i
+  while (start > 0 && all[start - 1]!.info.role === "assistant") start--
+  const user = all[start - 1]
+  const turn = all.slice(start, i + 1)
+  const out = turn.reduce((a, x) => a + (x.info.tokens?.output ?? 0) + (x.info.tokens?.reasoning ?? 0), 0)
+  const t = m.info.tokens
+  const context = t ? t.input + t.cache.read + t.cache.write : 0
+  const bits = []
+  if (user) bits.push(`Took ${Math.max(0, Math.round((m.info.time.completed - user.info.time.created) / 1000))} s`)
+  if (turn.length > 1) bits.push(`${turn.length} steps`)
+  if (context) bits.push(`context ${k(context)} tokens`)
+  if (out) bits.push(`${k(out)} out`)
+  return bits.length ? bits.join(" · ") : null
+}
+
+function Message({ m, footer }: { m: Msg; footer: string | null }) {
   const parts = m.parts.filter((p) => !(p as { synthetic?: boolean }).synthetic)
   const err = (m.info as { error?: { name?: string; data?: { message?: string } } }).error
   if (m.info.role === "user") {
@@ -262,6 +287,7 @@ function Message({ m }: { m: Msg }) {
       {shown.map((p) => <Part key={p.id} p={p} />)}
       {err && err.name !== "MessageAbortedError" && <div className="form-alert">{err.data?.message ?? err.name}</div>}
       {err?.name === "MessageAbortedError" && <div className="chat-note">Aborted.</div>}
+      {footer && <div className="chat-turn">{footer}</div>}
     </div>
   )
 }
@@ -311,20 +337,38 @@ function ToolRow({ p }: { p: OcPart }) {
   )
 }
 
-/** Plain text with ``` code blocks and `inline code`; nothing else is interpreted. */
+/** Plain text with a little markdown: ``` code blocks, `inline code`,
+ *  **bold**, and # headings (shown bold). Lists stay as typed. Nothing else is
+ *  interpreted, and nothing becomes HTML. */
 function renderText(text: string): ReactNode[] {
   const out: ReactNode[] = []
   const blocks = text.split(/```[^\n]*\n?/)
   blocks.forEach((b, i) => {
     if (i % 2 === 1) { out.push(<pre key={i} className="logs-body chat-code">{b.replace(/\n$/, "")}</pre>); return }
-    const bits = b.split(/(`[^`\n]+`)/)
+    const lines = b.split("\n")
     out.push(
       <span key={i}>
-        {bits.map((x, k) => (x.startsWith("`") && x.endsWith("`") && x.length > 2 ? <code key={k}>{x.slice(1, -1)}</code> : x))}
+        {lines.map((line, li) => {
+          const h = /^#{1,6}\s+(.*)$/.exec(line)
+          return (
+            <span key={li}>
+              {h ? <strong className="chat-h">{inline(h[1]!)}</strong> : inline(line)}
+              {li < lines.length - 1 ? "\n" : null}
+            </span>
+          )
+        })}
       </span>,
     )
   })
   return out
+}
+
+function inline(s: string): ReactNode[] {
+  return s.split(/(`[^`\n]+`)/).flatMap((x, k) => {
+    if (x.startsWith("`") && x.endsWith("`") && x.length > 2) return [<code key={k}>{x.slice(1, -1)}</code>]
+    return x.split(/(\*\*[^*\n]+\*\*)/).map((y, j) =>
+      y.startsWith("**") && y.endsWith("**") && y.length > 4 ? <strong key={`${k}-${j}`}>{y.slice(2, -2)}</strong> : <span key={`${k}-${j}`}>{y}</span>)
+  })
 }
 
 // ---- questions ---------------------------------------------------------------

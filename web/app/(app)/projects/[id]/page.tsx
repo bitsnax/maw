@@ -2,6 +2,7 @@ import Link from "next/link"
 import { notFound } from "next/navigation"
 import { prisma } from "@/lib/prisma"
 import { getMachineInfo } from "@/lib/machines"
+import { liveStates } from "@/lib/session-status"
 import ProjectSettings from "./ProjectSettings"
 import NewSessionForm from "./NewSessionForm"
 
@@ -11,6 +12,11 @@ function when(d: Date) {
   return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })
 }
 
+function SessionState({ state }: { state?: "working" | "waiting" | "retry" }) {
+  const label = state === "working" ? "Working" : state === "waiting" ? "Waiting for you" : state === "retry" ? "Retrying" : "Idle"
+  return <span className={`session-state is-${state ?? "idle"}`}>{label}</span>
+}
+
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const project = await prisma.project.findUnique({
@@ -18,11 +24,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     include: {
       machine: true,
       createdBy: { select: { name: true, email: true } },
-      sessions: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true, email: true } } } },
+      sessions: { orderBy: { updatedAt: "desc" }, include: { user: { select: { name: true, email: true } } } },
     },
   })
   if (!project) notFound()
-  const info = await getMachineInfo(project.machine)
+  const [info, live] = await Promise.all([getMachineInfo(project.machine), liveStates([project.id])])
 
   return (
     <>
@@ -41,6 +47,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <span>Added {when(project.createdAt)}{project.createdBy ? ` by ${project.createdBy.name || project.createdBy.email}` : ""}</span>
       </p>
       {!info.ok && <div className="form-alert spaced">{info.message}</div>}
+      {live.unreachable && <div className="form-alert spaced">maw-opencode did not answer: {live.unreachable}</div>}
 
       <h2 className="section-title">Sessions</h2>
       <NewSessionForm projectId={project.id} />
@@ -48,12 +55,14 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <p className="app-empty">No sessions yet.</p>
       ) : (
         <table className="data-table">
-          <thead><tr><th>Title</th><th>Started</th><th>By</th></tr></thead>
+          <thead><tr><th>Title</th><th>Status</th><th>Started</th><th>Last prompt</th><th>By</th></tr></thead>
           <tbody>
             {project.sessions.map((s) => (
               <tr key={s.id}>
                 <td><Link href={`/projects/${project.id}/sessions/${s.id}`} className="data-link">{s.title}</Link></td>
+                <td><SessionState state={live.states.get(s.id)?.state} /></td>
                 <td className="data-nowrap">{when(s.createdAt)}</td>
+                <td className="data-nowrap">{s.updatedAt.getTime() - s.createdAt.getTime() > 1000 ? when(s.updatedAt) : "—"}</td>
                 <td>{s.user?.name || s.user?.email || "—"}</td>
               </tr>
             ))}
