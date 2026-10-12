@@ -14,6 +14,8 @@
 //   POST /v1/fs/list   {root, path?}                     folder entries
 //   POST /v1/fs/write  {root, path, content}             create or replace a file
 //   POST /v1/fs/edit   {root, path, oldString, newString, replaceAll?}
+//   POST /v1/fs/glob   {root, pattern, path?, limit?}    file paths, newest first (max 1,000)
+//   POST /v1/fs/search {root, pattern, path?, include?, ignoreCase?, limit?}  file, line, text (max 500)
 // :ref is a container name or id. The agent's own container cannot be
 // stopped or restarted from MAW. File paths are confined to the root, and
 // every root to the allowed base (guard.ts); see fs.ts for the file rules.
@@ -29,6 +31,7 @@ import { listContainers, containerAction, containerLogs, HttpError, type Action 
 import { readHostIdentity, ripgrepVersion, type HostIdentity } from "./host.js"
 import { GuardError } from "./guard.js"
 import { fsRead, fsList, fsWrite, fsEdit, type FsOptions } from "./fs.js"
+import { fsGlob, fsSearch } from "./search.js"
 
 const CLIENT_CN = "maw"
 const VERSION: string = (
@@ -146,6 +149,8 @@ const routes: { method: string; path: RegExp; handler: Handler }[] = [
   { method: "POST", path: /^\/v1\/fs\/list$/, handler: async ({ cfg, body }) => ({ body: { ok: true, ...fsList(fsOpts(cfg), await body()) } }) },
   { method: "POST", path: /^\/v1\/fs\/write$/, handler: async ({ cfg, body }) => ({ body: { ok: true, ...fsWrite(fsOpts(cfg), await body()) } }) },
   { method: "POST", path: /^\/v1\/fs\/edit$/, handler: async ({ cfg, body }) => ({ body: { ok: true, ...fsEdit(fsOpts(cfg), await body()) } }) },
+  { method: "POST", path: /^\/v1\/fs\/glob$/, handler: async ({ cfg, body }) => ({ body: { ok: true, ...(await fsGlob({ base: cfg.allowedBase }, await body())) } }) },
+  { method: "POST", path: /^\/v1\/fs\/search$/, handler: async ({ cfg, body }) => ({ body: { ok: true, ...(await fsSearch({ base: cfg.allowedBase }, await body())) } }) },
 ]
 
 export function createAgentServer(cfg: Config): https.Server {
