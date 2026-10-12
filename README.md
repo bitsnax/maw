@@ -23,8 +23,12 @@ The small TypeScript server MAW pairs with on each machine. It answers only
 callers presenting MAW's client certificate (mutual TLS) and needs no
 runtime dependencies. Built here, never run by this stack:
 
-    docker compose --profile agent build agent          # image maw-agent:0.1.0
-    docker save maw-agent:0.1.0 | ssh 192.168.4.202 docker load
+    docker compose --profile agent build agent          # image maw-agent:0.2.0 (tests run in the build)
+    docker save maw-agent:0.2.0 | ssh 192.168.4.202 docker load
+
+The agent runs with `pid: host` and `privileged` and mounts `/opt`: it
+reads and writes project files itself, and runs commands on the host as
+the machine's user (see Files and commands).
 
 ## Machines (admin only)
 
@@ -40,7 +44,7 @@ containers and can start, stop and restart them and read their logs.
 - **Add machine** (Machines → Add machine) shows the install file once.
   On the machine:
 
-      docker save maw-agent:0.1.0 | ssh <address> docker load   # from .201, other machines only
+      docker save maw-agent:0.2.0 | ssh <address> docker load   # from .201, other machines only
       sudo mkdir -p /opt/maw-agent && sudo chown $(id -un) /opt/maw-agent
       # save the file as /opt/maw-agent/compose.yaml
       cd /opt/maw-agent && docker compose up -d
@@ -51,10 +55,50 @@ containers and can start, stop and restart them and read their logs.
 - **Remove machine**: typed confirmation; MAW stops accepting the agent and
   keeps its action history. Stop the agent on the machine with
   `cd /opt/maw-agent && docker compose down`.
-- **Agent updates**: rebuild here (`docker compose --profile agent build
-  agent`), copy the image as above, `docker compose up -d` on each machine.
+- **Agent updates.** `AGENT_VERSION` in `web/lib/install-file.ts` is the
+  version this MAW expects; a machine on an older agent shows "update
+  available" (Machines list and machine page) with the two commands. Its
+  certificate stays:
+
+      docker save maw-agent:0.2.0 | ssh <address> docker load   # on .201; skip for .201 itself
+      cd /opt/maw-agent && sed -i 's#image: maw-agent:[0-9.]*#image: maw-agent:0.2.0#' compose.yaml && docker compose up -d   # on the machine
+
+  A new agent version: bump `agent/package.json`, the image tag in
+  `docker-compose.yml` and `AGENT_VERSION` together.
 - Every action sent to a machine is recorded (`machine_action`: who, when,
   what, result) and shown under Recent actions.
+
+## Files and commands (agent 0.2.0)
+
+MAW can work in a machine's project folders: read, list, write and edit
+files, search them, and run commands. The machine page's **Console** tries
+all of it by hand; OpenCode (Phase 3) will use the same calls.
+
+- **Roots.** Every call names a project root, an existing folder inside
+  `/opt` (the only host folder the agent mounts). Paths are resolved with
+  links followed; anything outside the root is refused.
+- **Files.** Read (numbered lines, 2,000 per call; binary files and files
+  over 2 MB refused), list, write (new files belong to the machine's user,
+  mode 664; an existing file keeps its owner and mode), edit (exact text,
+  refused when not found or found more than once).
+- **Search.** ripgrep in the agent image: text (regular expression) or file
+  names (glob). What `.gitignore` excludes is skipped (node_modules, build
+  output, `.env`); links are not followed.
+- **Commands** run on the host as the machine's user, in a login shell
+  (`nsenter … runuser -l <user>`), so its PATH (nvm, pyenv), git identity and
+  SSH work as in a terminal; `umask 0002`, the host's `LANG`, started in the
+  root. Output streams live (`/api/machines/<id>/exec/<job>`, admin only);
+  what the login shell itself prints first is kept apart ("from the login
+  shell"). Time limit 1 min to 1 h (default 10 min); Stop and the limit end
+  the command and everything it started (TERM, then KILL after 5 s). At most
+  4 at once per machine; the agent keeps a command's last 2,000 lines for 1
+  hour after it ends (in memory: an agent restart forgets them).
+- **Recorded** under Recent actions: every command (text, root, outcome:
+  `exit 0 in 1.2 s`, `stopped after …`, `timed out after …`) and every
+  write and edit (path). Reads, lists and searches are not recorded.
+- Agent endpoints: `POST /v1/fs/{read,list,write,edit,glob,search}`,
+  `POST /v1/exec`, `GET /v1/exec[/<id>[/stream]]`, `POST /v1/exec/<id>/stop`
+  (see `agent/src/server.ts`).
 
 ## Routing
 
