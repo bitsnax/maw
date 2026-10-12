@@ -1,0 +1,119 @@
+# maw — Managed Agent Wrapper
+# Services: traefik (own TLS via step-ca ACME) · migrate · web (Next.js) · postgres:16
+#
+# Topology: the .201 edge Traefik owns host :80/:443 and SNI-passthroughs
+# maw.lan.arpa to THIS stack's traefik over the shared proxy-nw network:
+#   edge  tcp/websecure  HostSNI(maw.lan.arpa) passthrough -> maw-traefik:443
+#   edge  http/web       ACME challenge                     -> maw-traefik:80
+# maw-traefik terminates its own TLS (step-ca ACME) and binds NO host ports.
+
+services:
+  traefik:
+    image: traefik:v3.6.7
+    container_name: maw-traefik
+    restart: unless-stopped
+    # Resolve *.lan.arpa (ca.lan.arpa for ACME) via the infra dnsmasq.
+    dns:
+      - 192.168.4.200
+    environment:
+      # Trust the LAN step-ca root for ACME to https://ca.lan.arpa:9000.
+      - LEGO_CA_CERTIFICATES=/etc/traefik/certs/lan-root-ca.crt
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        update-ca-certificates >/dev/null 2>&1 || true
+        exec traefik --configFile=/etc/traefik/traefik.yml
+    expose:
+      - "80"
+      - "443"
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./traefik/certs:/etc/traefik/certs:ro
+      - ./traefik/acme:/acme
+      - ./traefik/certs/lan-root-ca.crt:/usr/local/share/ca-certificates/lan-root-ca.crt:ro
+    networks:
+      - maw-net
+      - proxy-nw
+    depends_on:
+      - web
+
+  # One-shot: apply web/prisma/migrations, then exit. web waits for it.
+  # Also the place to run one-off scripts, e.g. the first admin:
+  #   docker compose run --rm -e ADMIN_EMAIL=... -e ADMIN_PASSWORD=... \
+  #     migrate npx tsx scripts/create-admin.ts
+  migrate:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      target: migrate
+    container_name: maw-migrate
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+    networks:
+      - maw-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      target: runner
+    container_name: maw-web
+    restart: unless-stopped
+    dns:
+      - 192.168.4.200
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+    expose:
+      - "3000"
+    networks:
+      - maw-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  postgres:
+    image: postgres:16
+    container_name: maw-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    # Loopback only: lets host-side tools (prisma migrate diff, psql) reach
+    # the database without exposing it to the LAN.
+    ports:
+      - "127.0.0.1:${MAW_DB_HOST_PORT:-5434}:5432"
+    volumes:
+      - maw-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - maw-net
+
+networks:
+  maw-net:
+    name: maw-net
+  # Shared with the edge Traefik so it can reach maw-traefik by name.
+  proxy-nw:
+    external: true
+    name: proxy-nw
+
+volumes:
+  maw-pgdata:
+    name: maw-pgdata

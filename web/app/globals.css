@@ -1,0 +1,471 @@
+@import "tailwindcss";
+
+/* ===========================================================================
+ * Design tokens
+ * ---------------------------------------------------------------------------
+ * Single source of truth for shared values. Components reference these
+ * via var(). Change a token here, the change propagates everywhere it
+ * is read.
+ *
+ * Naming: --<area>-<role>. Sidebars use --sidebar-*. As more shared
+ * surfaces emerge (cards, forms, tables), add their own token groups.
+ * ========================================================================= */
+:root {
+  /* Sidebar layout */
+  --sidebar-width: 240px;
+
+  /* Sidebar surface */
+  --sidebar-bg: #0f1320;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+
+  /* Sidebar title bar (top label) */
+  --sidebar-title-color: #6a7488;
+
+  /* Sidebar section headers (top-level entries) */
+  --sidebar-header-color: #cfd4e4;
+  --sidebar-header-hover-color: #f4f6fb;
+  --sidebar-header-disabled-color: #6a7488;
+
+  /* Sidebar nested links */
+  --sidebar-link-color: #aab2c8;
+  --sidebar-link-hover-color: #f4f6fb;
+
+  /* Sidebar interaction states */
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.05);
+  --sidebar-active-bg: rgba(120, 150, 255, 0.14);
+  --sidebar-active-color: #ffffff;
+
+  /* Sidebar quiet text (counts, chevrons) */
+  --sidebar-muted-color: #6a7488;
+  --sidebar-chevron-color: #8089a0;
+
+  /* Header */
+  --header-bg: #0c0f1a;
+  --header-border: rgba(255, 255, 255, 0.08);
+  --header-brand-color: #f4f6fb;
+  --header-user-color: #aab2c8;
+  --header-status-color: #6b7488;
+  --header-link-color: #9db4ff;
+  --header-link-border: rgba(120, 150, 255, 0.35);
+  --header-link-hover-bg: rgba(120, 150, 255, 0.12);
+  --header-signout-bg: rgba(255, 255, 255, 0.06);
+  --header-signout-border: rgba(255, 255, 255, 0.14);
+  --header-signout-hover-bg: rgba(255, 255, 255, 0.12);
+  --header-signout-color: #eef1f8;
+
+  /* Light surfaces (cards, panels, menus) */
+  --surface-bg: #ffffff;
+  --surface-border: #e6e9ef;
+  --text-title-color: #1f2433;
+  --text-muted-color: #6a7488;
+
+  /* User Menu */
+  --user-menu-border: #bec4d0;
+
+  /* Interaction states (shared across lists, tables, result rows) */
+  --row-hover-bg: #dee0e5;
+}
+
+/* ===========================================================================
+ * Base
+ * ========================================================================= */
+body {
+  font-family: Arial, sans-serif;
+}
+
+/* ===========================================================================
+ * Site header (app/components/SiteHeader.tsx)
+ * ========================================================================= */
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 1.25rem;
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--header-border);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+.site-brand {
+  font-weight: 650;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+  color: var(--header-brand-color);
+}
+.site-status {
+  color: var(--header-status-color);
+  font-size: 0.85rem;
+}
+.site-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+.site-link {
+  color: var(--header-link-color);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--header-link-border);
+  border-radius: 7px;
+}
+.site-link:hover {
+  background: var(--header-link-hover-bg);
+}
+.site-user {
+  color: var(--header-user-color);
+  font-size: 0.85rem;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.site-signout {
+  background: var(--header-signout-bg);
+  color: var(--header-signout-color);
+  border: 1px solid var(--header-signout-border);
+  border-radius: 7px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.site-signout:hover {
+  background: var(--header-signout-hover-bg);
+}
+.site-signout:active {
+  transform: translateY(1px);
+}
+
+/* ===========================================================================
+ * Layout shells
+ * ---------------------------------------------------------------------------
+ * Each route group's layout.tsx renders one of these wrappers.
+ * The 56px offset in min-height matches SiteHeader's rendered height
+ * (0.7rem padding top/bottom + ~1.4rem line content ≈ 56px).
+ * ========================================================================= */
+.admin-shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  min-height: calc(100vh - 56px);
+  background: #f7f8fb;
+}
+.admin-main {
+  padding: 1.5rem 2rem;
+  overflow-x: auto;
+}
+
+.auth-shell {
+  min-height: calc(100vh - 56px);
+  align-items: flex-start;
+  justify-content: center;
+  background: #fafbfd;
+}
+
+@media (max-width: 720px) {
+  .admin-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===========================================================================
+ * Admin sidebar (app/(admin)/admin/_components/AdminSidebar.tsx)
+ * ========================================================================= */
+.admin-sidebar {
+  background: var(--sidebar-bg);
+  color: var(--sidebar-header-color);
+  padding: 1.25rem 0.75rem;
+  border-right: 1px solid var(--sidebar-border);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+.admin-sidebar-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sidebar-title-color);
+  padding: 0 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--sidebar-border);
+  margin-bottom: 0.75rem;
+}
+.admin-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.admin-sidebar-link {
+  display: block;
+  padding: 0.55rem 0.75rem;
+  color: var(--sidebar-header-color);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-decoration: none;
+  border-radius: 6px;
+  transition: background 0.12s, color 0.12s;
+}
+.admin-sidebar-link:hover {
+  background: var(--sidebar-hover-bg);
+  color: var(--sidebar-header-hover-color);
+}
+.admin-sidebar-link.is-active {
+  background: var(--sidebar-active-bg);
+  color: var(--sidebar-active-color);
+}
+@media (max-width: 720px) {
+  .admin-sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--sidebar-border);
+    padding: 0.75rem;
+  }
+  .admin-sidebar-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+}
+
+/* ===========================================================================
+ * Breadcrumbs (app/components/Breadcrumbs.tsx)
+ * ========================================================================= */
+.breadcrumbs {
+  font-size: 0.85rem;
+  color: #5a6478;
+  margin-bottom: 1rem;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+.breadcrumbs-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.breadcrumbs-item {
+  display: inline-flex;
+  align-items: center;
+}
+.breadcrumbs-link {
+  color: #5a6478;
+  text-decoration: none;
+  padding: 0.15rem 0.25rem;
+  border-radius: 4px;
+  transition: background 0.12s, color 0.12s;
+}
+.breadcrumbs-link:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: #1f2433;
+}
+.breadcrumbs-separator {
+  color: #b3bac8;
+  margin: 0 0.25rem;
+  user-select: none;
+}
+.breadcrumbs-current {
+  color: #1f2433;
+  font-weight: 600;
+  padding: 0.15rem 0.25rem;
+}
+.breadcrumbs-current-soft {
+  color: var(--breadcrumbs-link-color, inherit);
+  font-weight: 500;
+}
+
+/* ===========================================================================
+ * User menu (app/components/UserMenu.tsx)
+ * ---------------------------------------------------------------------------
+ * Circular avatar button in the header, with a dropdown panel that
+ * appears below it on click. Panel anchors to the right edge of the
+ * trigger so it stays inside the viewport on narrow widths.
+ *
+ * Tokens are scoped --user-menu-* and don't reuse --header-* — the
+ * panel is a light surface that sits OUTSIDE the dark header chrome,
+ * so it uses the light --surface-* palette instead.
+ * ========================================================================= */
+
+:root {
+  /* Trigger button (circle on dark header) */
+  --user-menu-trigger-size: 32px;
+  --user-menu-trigger-bg: rgba(255, 255, 255, 0.08);
+  --user-menu-trigger-bg-hover: rgba(255, 255, 255, 0.16);
+  --user-menu-trigger-border: rgba(255, 255, 255, 0.18);
+  --user-menu-trigger-color: #eef1f8;
+  --user-menu-trigger-focus-ring: rgba(120, 150, 255, 0.55);
+
+  /* Dropdown panel */
+  --user-menu-panel-bg: var(--surface-bg);
+  --user-menu-panel-border: var(--user-menu-border);
+  --user-menu-panel-shadow: 0 8px 24px rgba(15, 19, 32, 0.18);
+  --user-menu-panel-width: 240px;
+
+  /* Header block (name + email at top of panel) */
+  --user-menu-name-color: var(--text-title-color);
+  --user-menu-email-color: var(--text-muted-color);
+  --user-menu-section-border: var(--surface-border);
+
+  /* Items */
+  --user-menu-item-color: var(--text-title-color);
+  --user-menu-item-hover-bg: var(--row-hover-bg);
+  --user-menu-danger-color: #b42318;
+  --user-menu-danger-hover-bg: #fdecec;
+}
+
+.user-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.user-menu-trigger {
+  width: var(--user-menu-trigger-size);
+  height: var(--user-menu-trigger-size);
+  border-radius: 50%;
+  background: var(--user-menu-trigger-bg);
+  border: 1px solid var(--user-menu-trigger-border);
+  color: var(--user-menu-trigger-color);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.85rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s;
+}
+.user-menu-trigger:hover {
+  background: var(--user-menu-trigger-bg-hover);
+}
+.user-menu-trigger:focus-visible {
+  outline: 2px solid var(--user-menu-trigger-focus-ring);
+  outline-offset: 2px;
+}
+
+.user-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: var(--user-menu-panel-width);
+  background: var(--user-menu-panel-bg);
+  border: 1px solid var(--user-menu-panel-border);
+  border-radius: 8px;
+  box-shadow: var(--user-menu-panel-shadow);
+  padding: 0;
+  z-index: 50;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  overflow: hidden;
+}
+
+.user-menu-header {
+  padding: 0.7rem 0.85rem;
+  border-bottom: 1px solid var(--user-menu-section-border);
+}
+.user-menu-name {
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--user-menu-name-color);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-email {
+  font-size: 0.78rem;
+  color: var(--user-menu-email-color);
+  margin-top: 0.15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu-section {
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--user-menu-section-border);
+}
+.user-menu-section:last-child {
+  border-bottom: none;
+}
+
+.user-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem 0.85rem;
+  font-family: inherit;
+  font-size: 0.86rem;
+  color: var(--user-menu-item-color);
+  text-decoration: none;
+  transition: background 0.1s;
+}
+.user-menu-item:hover {
+  background: var(--user-menu-item-hover-bg);
+}
+.user-menu-item:focus-visible {
+  outline: 2px solid var(--user-menu-trigger-focus-ring);
+  outline-offset: -2px;
+}
+
+/* --- User menu item icons ------------------------------------------
+ * Fixed-width slot so labels align even with mixed icon widths
+ * (a gear is narrower than a shield). Sits inline with the label
+ * text, vertically centered. */
+.user-menu-item-icon {
+  display: inline-block;
+  width: 1rem;
+  margin-right: 0.6rem;
+  text-align: center;
+  color: inherit;
+  opacity: 0.75;
+}
+
+.user-menu-signout {
+  color: var(--user-menu-danger-color);
+}
+.user-menu-signout:hover {
+  background: var(--user-menu-danger-hover-bg);
+}
+
+/* --- Account shell -------------------------------------------------
+ * Single centered column for /account/*. No sidebar. Wider than the
+ * (auth) login shell (480px) — a settings form reads better with a
+ * constrained measure.
+ */
+.account-shell {
+  display: flex;
+  justify-content: center;
+  background: #fafbfd;
+  padding: 2.5rem 1.25rem 4rem;
+}
+.account-main {
+  width: 100%;
+  max-width: 640px;
+}
+
+/* --- App shell -----------------------------------------------------
+ * Signed-in MAW screens (app/(app)/layout.tsx).
+ */
+.app-shell {
+  display: flex;
+  justify-content: center;
+  background: #fafbfd;
+  min-height: calc(100vh - 56px);
+  padding: 2.5rem 1.25rem 4rem;
+}
+.app-main {
+  width: 100%;
+  max-width: 1200px;
+}
+.app-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1f2433;
+}
+.app-empty {
+  margin: 0;
+  color: #6a7488;
+}

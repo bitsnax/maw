@@ -1,0 +1,27 @@
+.env
+
+backups/*.sql
+backups/*.tar.gz
+
+# node
+web/node_modules/
+web/.next/
+web/next-env.d.ts
+*.tsbuildinfo
+
+# Explicitly ignore database artifacts
+*.db
+*.db-shm
+*.db-wal
+
+# ACME state (contains account keys)
+traefik/acme/
+
+# Generated certificates
+traefik/certs/*.pem
+
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

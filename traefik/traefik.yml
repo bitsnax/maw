@@ -1,0 +1,30 @@
+# maw's own Traefik — terminates TLS for maw.lan.arpa via step-ca ACME.
+# Sits BEHIND the .201 edge Traefik (SNI passthrough to :443, ACME
+# challenge to :80). File provider only, no Docker provider — the same
+# pattern as caw.
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+certificatesResolvers:
+  stepca:
+    acme:
+      caServer: "https://ca.lan.arpa:9000/acme/acme/directory"
+      email: "admin@lan.arpa"
+      storage: "/acme/acme-stepca.json"
+      httpChallenge:
+        entryPoint: web
+
+api:
+  dashboard: false
+
+log:
+  level: INFO

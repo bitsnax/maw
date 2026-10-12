@@ -1,0 +1,17 @@
+# maw routing (file provider). maw-traefik terminates TLS for maw.lan.arpa
+# and forwards to the web container on :3000.
+
+http:
+  routers:
+    maw:
+      entryPoints: ["websecure"]
+      rule: "Host(`maw.lan.arpa`)"
+      tls:
+        certResolver: stepca
+      service: maw-web
+
+  services:
+    maw-web:
+      loadBalancer:
+        servers:
+          - url: "http://maw-web:3000"
