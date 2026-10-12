@@ -17,6 +17,15 @@ beside llama.cpp (`llama-cpp`, `192.168.4.201:8081`).
 Networks: `maw-net` (internal), `proxy-nw` (external, shared with the edge).
 Volume: `maw-pgdata`.
 
+## maw-agent (agent/)
+
+The small TypeScript server MAW pairs with on each machine. It answers only
+callers presenting MAW's client certificate (mutual TLS) and needs no
+runtime dependencies. Built here, never run by this stack:
+
+    docker compose --profile agent build agent          # image maw-agent:0.1.0
+    docker save maw-agent:0.1.0 | ssh 192.168.4.202 docker load
+
 ## Routing
 
 The .201 edge (`traefik-edge`, file `/opt/traefik-edge/dynamic.yml`) has

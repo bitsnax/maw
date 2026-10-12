@@ -5,6 +5,8 @@ backups/*.tar.gz
 
 # node
 web/node_modules/
+agent/node_modules/
+agent/dist/
 web/.next/
 web/next-env.d.ts
 *.tsbuildinfo
