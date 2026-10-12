@@ -56,7 +56,7 @@ async function checkAgent(id: string, testCtr: string) {
   const info = await getMachineInfo(m)
   check("info through mutual TLS", info.ok, info.ok ? `${info.data.host.hostname}, Docker ${info.data.docker?.version}` : info.message)
   const after = await prisma.machine.findUniqueOrThrow({ where: { id } })
-  check("last seen and agent version recorded", !!after.lastSeenAt && after.agentVersion === "0.1.0")
+  check("last seen and agent version recorded", !!after.lastSeenAt && /^\d+\.\d+\.\d+$/.test(after.agentVersion ?? ""))
 
   const list = await getMachineContainers(m)
   check("containers listed", list.ok && list.data.containers.some((c) => c.name === "maw-web"),

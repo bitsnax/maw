@@ -6,12 +6,15 @@ COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY tsconfig.json ./
 COPY src ./src
-RUN npm run build
+COPY test ./test
+# The tests (root confinement, host identity) run here: a failure stops the build.
+RUN npm run build && npm test
 
-# Runtime: Node and the compiled agent only (no runtime dependencies).
-# Runs as root inside the container: it needs the Docker socket now and,
-# from Phase 2, the host's namespaces (pid: host, privileged).
+# Runtime: Node, the compiled agent, and ripgrep for project search.
+# Runs as root inside the container: it needs the Docker socket and the
+# host's namespaces (pid: host, privileged).
 FROM node:${NODE_VERSION}
+RUN apk add --no-cache ripgrep
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json ./

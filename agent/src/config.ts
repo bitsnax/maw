@@ -7,6 +7,8 @@
 //   MAW_RUN_AS          host user commands run as (used from Phase 2)
 //   MAW_AGENT_PORT      listen port inside the container (default 7017)
 //   MAW_DOCKER_SOCKET   Docker socket path (default /var/run/docker.sock)
+//   MAW_ALLOWED_BASE    folder every project root must be inside (default /opt)
+//   MAW_HOST_ROOT       where the host's files are visible (default /proc/1/root)
 
 import { X509Certificate } from "node:crypto"
 
@@ -18,6 +20,8 @@ export type Config = {
   runAs: string
   port: number
   dockerSocket: string
+  allowedBase: string
+  hostRoot: string
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -44,5 +48,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     runAs: env.MAW_RUN_AS?.trim() ?? "",
     port,
     dockerSocket: env.MAW_DOCKER_SOCKET?.trim() || "/var/run/docker.sock",
+    allowedBase: env.MAW_ALLOWED_BASE?.trim() || "/opt",
+    hostRoot: env.MAW_HOST_ROOT?.trim() || "/proc/1/root",
   }
 }

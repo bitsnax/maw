@@ -5,7 +5,7 @@
 // handshake or with 403. MAW in turn accepts this agent only if its
 // certificate's fingerprint is the one stored for the machine.
 //
-// Phase 1 API (JSON; errors are { ok: false, message }):
+// API (JSON; errors are { ok: false, message }):
 //   GET  /v1/info                          agent, host and Docker summary
 //   GET  /v1/containers                    every container, grouped by Compose project
 //   POST /v1/containers/:ref/start|stop|restart
@@ -21,12 +21,19 @@ import type { TLSSocket } from "node:tls"
 import { loadConfig, type Config } from "./config.js"
 import { dockerRequest, DockerError, type DockerInfo, type DockerVersion } from "./docker.js"
 import { listContainers, containerAction, containerLogs, HttpError, type Action } from "./containers.js"
+import { readHostIdentity, ripgrepVersion, type HostIdentity } from "./host.js"
+import { GuardError } from "./guard.js"
 
 const CLIENT_CN = "maw"
 const VERSION: string = (
   JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }
 ).version
 const startedAt = Date.now()
+
+// Read once at start (see host.ts); reported by /v1/info.
+let identity: HostIdentity = { ok: false, user: "", error: "not read yet" }
+let ripgrep: string | null = null
+export function hostIdentity(): HostIdentity { return identity }
 
 type Json = Record<string, unknown>
 type Ctx = { cfg: Config; req: IncomingMessage; params: string[]; query: URLSearchParams }
@@ -39,7 +46,14 @@ function send(res: ServerResponse, status: number, body: Json) {
 }
 
 const info: Handler = async ({ cfg }) => {
-  const agent = { id: cfg.id, version: VERSION, uptimeSeconds: Math.round((Date.now() - startedAt) / 1000), runAs: cfg.runAs || null }
+  const agent = {
+    id: cfg.id, version: VERSION, uptimeSeconds: Math.round((Date.now() - startedAt) / 1000), runAs: cfg.runAs || null,
+    allowedBase: cfg.allowedBase,
+    hostUser: identity.ok
+      ? { ok: true, user: identity.user, uid: identity.uid, gid: identity.gid, home: identity.home, lang: identity.lang }
+      : { ok: false, user: identity.user, error: identity.error },
+    ripgrep,
+  }
   try {
     const [d, v] = await Promise.all([
       dockerRequest<DockerInfo>(cfg.dockerSocket, "GET", "/info"),
@@ -114,7 +128,7 @@ export function createAgentServer(cfg: Config): https.Server {
         status = out.status ?? 200
         send(res, status, out.body)
       } catch (e) {
-        status = e instanceof HttpError ? e.status : e instanceof DockerError && e.status ? e.status : 500
+        status = e instanceof HttpError || e instanceof GuardError ? e.status : e instanceof DockerError && e.status ? e.status : 500
         send(res, status, { ok: false, message: e instanceof Error ? e.message : String(e) })
       } finally {
         console.log(`${new Date().toISOString()} ${req.method} ${path} ${status} ${Date.now() - t0}ms`)
@@ -141,6 +155,12 @@ if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file://").h
     console.error(`maw-agent ${VERSION}: ${e instanceof Error ? e.message : e}`)
     process.exit(1)
   }
+  identity = readHostIdentity(cfg.runAs, cfg.hostRoot)
+  ripgrep = ripgrepVersion()
+  console.log(identity.ok
+    ? `maw-agent ${VERSION}: runs as ${identity.user} (uid ${identity.uid}, gid ${identity.gid}, ${identity.home}, LANG ${identity.lang})`
+    : `maw-agent ${VERSION}: host user not available: ${identity.error}`)
+  console.log(`maw-agent ${VERSION}: ripgrep ${ripgrep ?? "not found"}`)
   const server = createAgentServer(cfg)
   server.on("tlsClientError", (e, socket) => {
     console.log(`${new Date().toISOString()} refused ${socket.remoteAddress ?? "unknown address"}: ${refusalReason(e)}`)

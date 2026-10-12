@@ -85,7 +85,7 @@ services:
         condition: service_completed_successfully
 
   # maw-agent image, built here and copied to each paired machine
-  # (docker save maw-agent:0.1.0 | ssh <machine> docker load). Never started
+  # (docker save maw-agent:0.2.0 | ssh <machine> docker load). Never started
   # by this stack: the "agent" profile keeps `docker compose up` from running it.
   #   docker compose --profile agent build agent
   agent:
@@ -93,7 +93,7 @@ services:
     build:
       context: ./agent
       dockerfile: Dockerfile
-    image: maw-agent:0.1.0
+    image: maw-agent:0.2.0
 
   postgres:
     image: postgres:16
