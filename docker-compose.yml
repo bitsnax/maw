@@ -52,6 +52,9 @@ services:
     env_file: .env
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+    volumes:
+      # Scripts that prepare a project's workspace (self-tests) write here too.
+      - maw-workspaces:/workspaces
     networks:
       - maw-net
     depends_on:
@@ -74,8 +77,12 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       - BETTER_AUTH_URL=${BETTER_AUTH_URL}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - MAW_OPENCODE_URL=http://maw-opencode:4096
     expose:
       - "3000"
+    volumes:
+      # Each project's workspace folder (/workspaces/<slug>), shared with maw-opencode.
+      - maw-workspaces:/workspaces
     networks:
       - maw-net
     depends_on:
@@ -83,6 +90,34 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+
+  # OpenCode (Phase 3): the only OpenCode, serving every project from one
+  # server (each call names the project's workspace folder). Its read, write,
+  # edit, glob, grep and bash are MAW's (opencode/config/tools): they call
+  # maw-web's /api/tools with MAW_TOOLS_TOKEN, and MAW runs them on the
+  # project's machine. maw-web talks to it with MAW_OPENCODE_PASSWORD.
+  # No host port: reached on maw-net only. Sessions live in maw-opencode-data.
+  opencode:
+    build:
+      context: ./opencode
+      dockerfile: Dockerfile
+    image: maw-opencode:1.19.0
+    container_name: maw-opencode
+    restart: unless-stopped
+    environment:
+      - OPENCODE_SERVER_PASSWORD=${MAW_OPENCODE_PASSWORD}
+      - MAW_TOOLS_TOKEN=${MAW_TOOLS_TOKEN}
+      - MAW_URL=http://maw-web:3000
+      - LLAMACPP_API_KEY=${LLAMACPP_API_KEY}
+      - LLAMACPP_BASE_URL=${LLAMACPP_BASE_URL:-http://192.168.4.201:8081/v1}
+      - LLAMACPP_MODEL=${LLAMACPP_MODEL:-Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp}
+    expose:
+      - "4096"
+    volumes:
+      - maw-opencode-data:/data
+      - maw-workspaces:/workspaces
+    networks:
+      - maw-net
 
   # maw-agent image, built here and copied to each paired machine
   # (docker save maw-agent:0.2.0 | ssh <machine> docker load). Never started
@@ -128,3 +163,7 @@ networks:
 volumes:
   maw-pgdata:
     name: maw-pgdata
+  maw-opencode-data:
+    name: maw-opencode-data
+  maw-workspaces:
+    name: maw-workspaces

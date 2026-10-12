@@ -33,6 +33,8 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 COPY --from=builder --chown=node:node /app/public ./public
 RUN mkdir .next && chown node:node .next
+# Projects' workspace folders (volume maw-workspaces, shared with maw-opencode).
+RUN mkdir -p /workspaces && chown node:node /workspaces
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/node_modules/.prisma ./node_modules/.prisma
