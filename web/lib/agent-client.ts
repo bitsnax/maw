@@ -1,0 +1,110 @@
+import https from "node:https"
+import { getPki } from "./pki-store"
+
+// Calls a machine's maw-agent over mutual TLS.
+//
+//   - MAW presents its client certificate (CN "maw").
+//   - The agent must present a certificate from MAW's CA whose SHA-256
+//     fingerprint equals the one stored for the machine. That fingerprint
+//     check replaces host-name checking.
+//   - agent: false = a fresh connection for every call. A pooled connection
+//     would skip the handshake, and with it the fingerprint check (found by
+//     the step 02 self-test).
+//   - Never throws: every outcome is an AgentResult with a readable message.
+
+export type AgentTarget = {
+  name: string
+  address: string
+  port: number
+  certFingerprint: string
+}
+
+export type AgentResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; status?: number; message: string }
+
+const FINGERPRINT_MISMATCH = "MAW_FINGERPRINT_MISMATCH"
+
+function readable(e: NodeJS.ErrnoException, m: AgentTarget, timeoutMs: number): string {
+  const where = `${m.address}:${m.port}`
+  if (e.message === FINGERPRINT_MISMATCH) {
+    return `The agent at ${where} is not the one paired as ${m.name} (its certificate does not match). Check the address, or reissue the certificate.`
+  }
+  switch (e.code) {
+    case "ECONNREFUSED": return `Nothing is listening at ${where}. Is maw-agent running on ${m.name}?`
+    case "EHOSTUNREACH":
+    case "ENETUNREACH": return `${where} cannot be reached from MAW (no route to the machine).`
+    case "ENOTFOUND":
+    case "EAI_AGAIN": return `The name ${m.address} does not resolve.`
+    case "ECONNRESET": return `The agent at ${where} closed the connection (it did not accept MAW's certificate).`
+    case "ETIMEDOUT": return `${where} did not answer within ${Math.round(timeoutMs / 1000)} seconds.`
+    case "UNABLE_TO_VERIFY_LEAF_SIGNATURE":
+    case "SELF_SIGNED_CERT_IN_CHAIN":
+    case "DEPTH_ZERO_SELF_SIGNED_CERT":
+    case "CERT_SIGNATURE_FAILURE":
+      return `The agent at ${where} has a certificate that MAW did not issue.`
+    case "CERT_HAS_EXPIRED": return `The agent's certificate on ${m.name} has expired. Reissue it.`
+  }
+  return `${m.name}: ${e.message}`
+}
+
+export async function callAgent<T>(
+  m: AgentTarget,
+  method: "GET" | "POST",
+  path: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<AgentResult<T>> {
+  const timeoutMs = opts.timeoutMs ?? 10_000
+  let pki
+  try {
+    pki = await getPki()
+  } catch (e) {
+    return { ok: false, message: `MAW's certificates are not available: ${e instanceof Error ? e.message : e}` }
+  }
+
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (r: AgentResult<T>) => { if (!settled) { settled = true; resolve(r) } }
+
+    const req = https.request(
+      {
+        host: m.address,
+        port: m.port,
+        method,
+        path,
+        agent: false,
+        cert: pki.client.certPem,
+        key: pki.client.keyPem,
+        ca: pki.ca.certPem,
+        minVersion: "TLSv1.2",
+        timeout: timeoutMs,
+        headers: { accept: "application/json" },
+        checkServerIdentity: (_host, cert) =>
+          cert.fingerprint256 === m.certFingerprint ? undefined : new Error(FINGERPRINT_MISMATCH),
+      },
+      (res) => {
+        let text = ""
+        res.setEncoding("utf8")
+        res.on("data", (c: string) => { text += c })
+        res.on("end", () => {
+          let body: { ok?: boolean; message?: string } & Record<string, unknown>
+          try {
+            body = JSON.parse(text)
+          } catch {
+            done({ ok: false, status: res.statusCode, message: `${m.name} sent an answer MAW cannot read.` })
+            return
+          }
+          if (res.statusCode === 200 && body.ok) done({ ok: true, data: body as T })
+          else done({ ok: false, status: res.statusCode, message: body.message ?? `${m.name} answered ${res.statusCode}.` })
+        })
+      },
+    )
+    req.on("timeout", () => {
+      const e: NodeJS.ErrnoException = new Error("timeout")
+      e.code = "ETIMEDOUT"
+      req.destroy(e)
+    })
+    req.on("error", (e: NodeJS.ErrnoException) => done({ ok: false, message: readable(e, m, timeoutMs) }))
+    req.end()
+  })
+}
