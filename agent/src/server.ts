@@ -10,8 +10,13 @@
 //   GET  /v1/containers                    every container, grouped by Compose project
 //   POST /v1/containers/:ref/start|stop|restart
 //   GET  /v1/containers/:ref/logs?tail=N   last N lines (default 200, max 2000)
+//   POST /v1/fs/read   {root, path, offset?, limit?}     numbered text lines
+//   POST /v1/fs/list   {root, path?}                     folder entries
+//   POST /v1/fs/write  {root, path, content}             create or replace a file
+//   POST /v1/fs/edit   {root, path, oldString, newString, replaceAll?}
 // :ref is a container name or id. The agent's own container cannot be
-// stopped or restarted from MAW.
+// stopped or restarted from MAW. File paths are confined to the root, and
+// every root to the allowed base (guard.ts); see fs.ts for the file rules.
 
 import https from "node:https"
 import os from "node:os"
@@ -23,6 +28,7 @@ import { dockerRequest, DockerError, type DockerInfo, type DockerVersion } from 
 import { listContainers, containerAction, containerLogs, HttpError, type Action } from "./containers.js"
 import { readHostIdentity, ripgrepVersion, type HostIdentity } from "./host.js"
 import { GuardError } from "./guard.js"
+import { fsRead, fsList, fsWrite, fsEdit, type FsOptions } from "./fs.js"
 
 const CLIENT_CN = "maw"
 const VERSION: string = (
@@ -36,7 +42,43 @@ let ripgrep: string | null = null
 export function hostIdentity(): HostIdentity { return identity }
 
 type Json = Record<string, unknown>
-type Ctx = { cfg: Config; req: IncomingMessage; params: string[]; query: URLSearchParams }
+type Ctx = { cfg: Config; req: IncomingMessage; params: string[]; query: URLSearchParams; body: () => Promise<Json> }
+
+// Request bodies: JSON objects only, at most 5 MB (a 4 MB file plus JSON escaping).
+const MAX_BODY_BYTES = 5 * 1024 * 1024
+
+function readBody(req: IncomingMessage): Promise<Json> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    let failed = false
+    req.on("data", (c: Buffer) => {
+      if (failed) return
+      size += c.length
+      if (size > MAX_BODY_BYTES) {
+        failed = true
+        reject(new HttpError(413, "Request body is over 5 MB."))
+        return
+      }
+      chunks.push(c)
+    })
+    req.on("error", (e) => { if (!failed) { failed = true; reject(e) } })
+    req.on("end", () => {
+      if (failed) return
+      const text = Buffer.concat(chunks).toString("utf8")
+      if (text.trim() === "") return resolve({})
+      try {
+        const v: unknown = JSON.parse(text)
+        if (v === null || typeof v !== "object" || Array.isArray(v)) throw new Error()
+        resolve(v as Json)
+      } catch {
+        reject(new HttpError(400, "Request body must be a JSON object."))
+      }
+    })
+  })
+}
+
+const fsOpts = (cfg: Config): FsOptions => ({ base: cfg.allowedBase, identity })
 type Handler = (ctx: Ctx) => Promise<{ status?: number; body: Json }>
 
 function send(res: ServerResponse, status: number, body: Json) {
@@ -100,6 +142,10 @@ const routes: { method: string; path: RegExp; handler: Handler }[] = [
     handler: async ({ cfg, params, query }) =>
       ({ body: { ok: true, ...(await containerLogs(cfg, decodeURIComponent(params[0]!), query.get("tail"))) } }),
   },
+  { method: "POST", path: /^\/v1\/fs\/read$/, handler: async ({ cfg, body }) => ({ body: { ok: true, ...fsRead(fsOpts(cfg), await body()) } }) },
+  { method: "POST", path: /^\/v1\/fs\/list$/, handler: async ({ cfg, body }) => ({ body: { ok: true, ...fsList(fsOpts(cfg), await body()) } }) },
+  { method: "POST", path: /^\/v1\/fs\/write$/, handler: async ({ cfg, body }) => ({ body: { ok: true, ...fsWrite(fsOpts(cfg), await body()) } }) },
+  { method: "POST", path: /^\/v1\/fs\/edit$/, handler: async ({ cfg, body }) => ({ body: { ok: true, ...fsEdit(fsOpts(cfg), await body()) } }) },
 ]
 
 export function createAgentServer(cfg: Config): https.Server {
@@ -124,7 +170,9 @@ export function createAgentServer(cfg: Config): https.Server {
           send(res, status, { ok: false, message: `No such endpoint: ${req.method} ${path}` })
           return
         }
-        const out = await route.handler({ cfg, req, params: (match as RegExpExecArray).slice(1), query: url.searchParams })
+        const out = await route.handler({
+          cfg, req, params: (match as RegExpExecArray).slice(1), query: url.searchParams, body: () => readBody(req),
+        })
         status = out.status ?? 200
         send(res, status, out.body)
       } catch (e) {
