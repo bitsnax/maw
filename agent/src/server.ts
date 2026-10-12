@@ -5,9 +5,13 @@
 // handshake or with 403. MAW in turn accepts this agent only if its
 // certificate's fingerprint is the one stored for the machine.
 //
-// Phase 1 API (JSON):
-//   GET /v1/info   agent, host and Docker summary
-// (containers and their actions arrive in step 04)
+// Phase 1 API (JSON; errors are { ok: false, message }):
+//   GET  /v1/info                          agent, host and Docker summary
+//   GET  /v1/containers                    every container, grouped by Compose project
+//   POST /v1/containers/:ref/start|stop|restart
+//   GET  /v1/containers/:ref/logs?tail=N   last N lines (default 200, max 2000)
+// :ref is a container name or id. The agent's own container cannot be
+// stopped or restarted from MAW.
 
 import https from "node:https"
 import os from "node:os"
@@ -16,6 +20,7 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import type { TLSSocket } from "node:tls"
 import { loadConfig, type Config } from "./config.js"
 import { dockerRequest, DockerError, type DockerInfo, type DockerVersion } from "./docker.js"
+import { listContainers, containerAction, containerLogs, HttpError, type Action } from "./containers.js"
 
 const CLIENT_CN = "maw"
 const VERSION: string = (
@@ -24,7 +29,8 @@ const VERSION: string = (
 const startedAt = Date.now()
 
 type Json = Record<string, unknown>
-type Handler = (cfg: Config, req: IncomingMessage) => Promise<{ status?: number; body: Json }>
+type Ctx = { cfg: Config; req: IncomingMessage; params: string[]; query: URLSearchParams }
+type Handler = (ctx: Ctx) => Promise<{ status?: number; body: Json }>
 
 function send(res: ServerResponse, status: number, body: Json) {
   const text = JSON.stringify(body)
@@ -32,7 +38,7 @@ function send(res: ServerResponse, status: number, body: Json) {
   res.end(text)
 }
 
-const info: Handler = async (cfg) => {
+const info: Handler = async ({ cfg }) => {
   const agent = { id: cfg.id, version: VERSION, uptimeSeconds: Math.round((Date.now() - startedAt) / 1000), runAs: cfg.runAs || null }
   try {
     const [d, v] = await Promise.all([
@@ -64,16 +70,31 @@ const info: Handler = async (cfg) => {
   }
 }
 
-const routes: Record<string, Handler> = {
-  "GET /v1/info": info,
-}
+const routes: { method: string; path: RegExp; handler: Handler }[] = [
+  { method: "GET", path: /^\/v1\/info$/, handler: info },
+  {
+    method: "GET", path: /^\/v1\/containers$/,
+    handler: async ({ cfg }) => ({ body: { ok: true, containers: await listContainers(cfg) } }),
+  },
+  {
+    method: "POST", path: /^\/v1\/containers\/([^/]+)\/(start|stop|restart)$/,
+    handler: async ({ cfg, params }) =>
+      ({ body: { ok: true, ...(await containerAction(cfg, decodeURIComponent(params[0]!), params[1] as Action)) } }),
+  },
+  {
+    method: "GET", path: /^\/v1\/containers\/([^/]+)\/logs$/,
+    handler: async ({ cfg, params, query }) =>
+      ({ body: { ok: true, ...(await containerLogs(cfg, decodeURIComponent(params[0]!), query.get("tail"))) } }),
+  },
+]
 
 export function createAgentServer(cfg: Config): https.Server {
   return https.createServer(
     { cert: cfg.certPem, key: cfg.keyPem, ca: cfg.caPem, requestCert: true, rejectUnauthorized: true, minVersion: "TLSv1.2" },
     async (req, res) => {
       const t0 = Date.now()
-      const path = (req.url ?? "/").split("?")[0]
+      const url = new URL(req.url ?? "/", "https://agent")
+      const path = url.pathname
       let status = 500
       try {
         const peer = (req.socket as TLSSocket).getPeerCertificate()
@@ -82,17 +103,18 @@ export function createAgentServer(cfg: Config): https.Server {
           send(res, status, { ok: false, message: "Only MAW may call this agent." })
           return
         }
-        const handler = routes[`${req.method} ${path}`]
-        if (!handler) {
-          status = 404
+        let match: RegExpExecArray | null = null
+        const route = routes.find((r) => r.method === req.method && (match = r.path.exec(path)) !== null)
+        if (!route || !match) {
+          status = routes.some((r) => r.path.test(path)) ? 405 : 404
           send(res, status, { ok: false, message: `No such endpoint: ${req.method} ${path}` })
           return
         }
-        const out = await handler(cfg, req)
+        const out = await route.handler({ cfg, req, params: (match as RegExpExecArray).slice(1), query: url.searchParams })
         status = out.status ?? 200
         send(res, status, out.body)
       } catch (e) {
-        status = e instanceof DockerError && e.status ? e.status : 500
+        status = e instanceof HttpError ? e.status : e instanceof DockerError && e.status ? e.status : 500
         send(res, status, { ok: false, message: e instanceof Error ? e.message : String(e) })
       } finally {
         console.log(`${new Date().toISOString()} ${req.method} ${path} ${status} ${Date.now() - t0}ms`)
