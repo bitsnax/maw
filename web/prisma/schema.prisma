@@ -1,8 +1,7 @@
 // MAW — Managed Agent Wrapper
 //
-// Starter schema: the four Better Auth tables (user, session, account,
-// verification) and nothing else. MAW's own models (projects, OpenCode
-// sessions, plans, steps) are added by later migrations.
+// Better Auth tables (user, session, account, verification), then MAW's
+// own models. Every change here ships with its migration in the same commit.
 
 generator client {
   provider = "prisma-client-js"
@@ -28,6 +27,9 @@ model User {
   banExpires    DateTime?
   sessions      Session[]
   accounts      Account[]
+
+  machinesCreated Machine[]       @relation("MachineCreatedBy")
+  machineActions  MachineAction[]
 
   @@map("user")
 }
@@ -79,4 +81,65 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+// ---------------------------------------------------------------------------
+// Machines (Phase 1): MAW's certificate authority, paired machines, and the
+// record of every action sent to a machine.
+// ---------------------------------------------------------------------------
+
+// One row (id "maw"): MAW's certificate authority and MAW's own client
+// certificate. Private keys are encrypted with MAW_ENCRYPTION_KEY (lib/crypto.ts).
+model Pki {
+  id            String   @id @default("maw")
+  caCertPem     String
+  caKeyEnc      String
+  clientCertPem String
+  clientKeyEnc  String
+  createdAt     DateTime @default(now())
+
+  @@map("pki")
+}
+
+// A paired machine running maw-agent. MAW trusts the agent only if its
+// certificate chains to MAW's CA AND its SHA-256 fingerprint equals
+// certFingerprint. The agent's private key is never stored.
+model Machine {
+  id              String          @id @default(cuid())
+  name            String          @unique
+  address         String
+  port            Int             @default(7017)
+  runAs           String
+  certFingerprint String
+  certNotAfter    DateTime
+  createdById     String?
+  createdBy       User?           @relation("MachineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  lastSeenAt      DateTime?
+  agentVersion    String?
+  hostname        String?
+  actions         MachineAction[]
+
+  @@map("machine")
+}
+
+// Who did what to which machine, and how it went. Kept when the machine or
+// the user is removed (machineName keeps the record readable).
+model MachineAction {
+  id          String   @id @default(cuid())
+  machineId   String?
+  machine     Machine? @relation(fields: [machineId], references: [id], onDelete: SetNull)
+  machineName String
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action      String
+  target      String?
+  ok          Boolean
+  message     String?
+  createdAt   DateTime @default(now())
+
+  @@index([machineId, createdAt])
+  @@index([userId])
+  @@map("machine_action")
 }
