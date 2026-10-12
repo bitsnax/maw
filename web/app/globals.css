@@ -469,3 +469,249 @@ body {
   margin: 0;
   color: #6a7488;
 }
+
+/* --- Site navigation (app/components/SiteHeader.tsx) ---------------- */
+.site-left {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  min-width: 0;
+}
+.site-nav {
+  display: flex;
+  gap: 0.25rem;
+}
+.site-nav-link {
+  color: var(--header-user-color);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 0.35rem 0.7rem;
+  border-radius: 7px;
+}
+.site-nav-link:hover {
+  color: var(--header-brand-color);
+  background: var(--header-link-hover-bg);
+}
+.site-nav-link.is-active {
+  color: var(--header-brand-color);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* --- Shared controls: buttons, forms, tables, code ------------------ */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+.page-head .app-title {
+  margin: 0;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 7px;
+  background: var(--surface-bg);
+  color: var(--text-title-color);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover {
+  background: #f1f3f7;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: #3b5bdb;
+  border-color: #3b5bdb;
+  color: #ffffff;
+}
+.btn-primary:hover {
+  background: #3049c4;
+}
+.btn-danger {
+  color: #b42318;
+  border-color: #f1c6c2;
+}
+.btn-danger:hover {
+  background: #fdecec;
+}
+.btn-small {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.form-card {
+  display: grid;
+  gap: 1rem;
+  max-width: 480px;
+  padding: 1.25rem;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+}
+.form-field {
+  display: grid;
+  gap: 0.3rem;
+}
+.form-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-title-color);
+}
+.form-input {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #c9ced8;
+  border-radius: 7px;
+  font-size: 0.95rem;
+  background: #ffffff;
+}
+.form-input:focus {
+  outline: none;
+  border-color: #3b5bdb;
+  box-shadow: 0 0 0 3px rgba(59, 91, 219, 0.15);
+}
+.form-input.has-error {
+  border-color: #d92d20;
+}
+.form-error {
+  font-size: 0.8rem;
+  color: #b42318;
+}
+.form-actions {
+  display: flex;
+  gap: 0.6rem;
+  padding-top: 0.25rem;
+}
+.form-alert {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid #f1c6c2;
+  border-radius: 8px;
+  background: #fdecec;
+  color: #8a1c13;
+  font-size: 0.9rem;
+}
+.form-alert-info {
+  border-color: #c9d4ff;
+  background: #f4f7ff;
+  color: #1f2a5c;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 0.9rem;
+}
+.data-table th {
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted-color);
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--surface-border);
+  background: #f8f9fb;
+}
+.data-table td {
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--surface-border);
+  vertical-align: top;
+  color: var(--text-title-color);
+}
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+.data-strong {
+  font-weight: 600;
+}
+.data-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+.data-note {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  color: #b42318;
+}
+.status-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+.status-dot.is-online {
+  background: #12b76a;
+  box-shadow: 0 0 0 3px rgba(18, 183, 106, 0.15);
+}
+.status-dot.is-offline {
+  background: #98a2b3;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* --- Add machine: install file -------------------------------------- */
+.install {
+  display: grid;
+  gap: 1rem;
+  max-width: 900px;
+}
+.install-steps {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.75rem;
+  color: var(--text-title-color);
+  font-size: 0.92rem;
+}
+.code-line {
+  margin: 0.35rem 0 0;
+  padding: 0.45rem 0.65rem;
+  background: #0f1320;
+  color: #e6e9f2;
+  border-radius: 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.code-block {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  max-height: 420px;
+  overflow: auto;
+  background: #0f1320;
+  color: #e6e9f2;
+  border-radius: 9px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
