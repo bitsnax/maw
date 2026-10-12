@@ -1,7 +1,7 @@
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { prisma } from "@/lib/prisma"
-import { getMachineInfo, getMachineContainers } from "@/lib/machines"
+import { getMachineInfo, getMachineContainers, agentUpdate, reconcileCommandRecords } from "@/lib/machines"
 import Containers from "./Containers"
 import MachineSettings from "./MachineSettings"
 
@@ -9,6 +9,10 @@ export const dynamic = "force-dynamic"
 
 function gib(bytes: number) {
   return `${(bytes / 1024 ** 3).toFixed(0)} GB`
+}
+
+function short(s: string, n: number) {
+  return s.length > n ? s.slice(0, n - 1) + "…" : s
 }
 
 function when(d: Date) {
@@ -20,8 +24,14 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
   const machine = await prisma.machine.findUnique({ where: { id } })
   if (!machine) notFound()
 
-  const [info, list, actions] = await Promise.all([
-    getMachineInfo(machine),
+  const info = await getMachineInfo(machine)
+  const update = info.ok ? agentUpdate(machine, info.data.agent.version) : null
+  // Commands that ended while nobody was watching: complete their records
+  // before they are listed below.
+  if (info.ok && !update) await reconcileCommandRecords(machine).catch(() => 0)
+  const commands = info.ok ? info.data.agent.commands : undefined
+
+  const [list, actions] = await Promise.all([
     getMachineContainers(machine),
     prisma.machineAction.findMany({
       where: { machineId: id },
@@ -54,6 +64,23 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
       ) : (
         <div className="form-alert">{info.message}</div>
       )}
+      {update && (
+        <div className="form-alert form-alert-info spaced">
+          <p className="data-strong">Agent {update.current} — update available ({update.expected})</p>
+          <p>Files, search and commands need agent {update.expected}. The machine keeps its certificate; run:</p>
+          <ol className="install-steps">
+            {update.steps.map((s) => (
+              <li key={s.command}>
+                {s.where}:
+                <pre className="code-line">{s.command}</pre>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+      {info.ok && !update && commands && !commands.ok && commands.error !== "not checked yet" && (
+        <div className="form-alert spaced">Commands do not work on this machine yet: {commands.error}</div>
+      )}
       {info.ok && !info.data.docker && (
         <div className="form-alert">The agent is running but cannot reach Docker: {info.data.dockerError}</div>
       )}
@@ -71,7 +98,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
       ) : (
         <table className="data-table">
           <thead>
-            <tr><th>When</th><th>Who</th><th>Action</th><th>Container</th><th>Result</th></tr>
+            <tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>Result</th></tr>
           </thead>
           <tbody>
             {actions.map((a) => (
@@ -79,8 +106,8 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
                 <td className="data-nowrap">{when(a.createdAt)}</td>
                 <td>{a.user?.name || a.user?.email || "—"}</td>
                 <td className="data-mono">{a.action}</td>
-                <td className="data-mono">{a.target ?? ""}</td>
-                <td className={a.ok ? "" : "data-bad"}>{a.ok ? a.message ?? "done" : a.message ?? "failed"}</td>
+                <td className="data-mono" title={a.target ?? undefined}>{short(a.target ?? "", 120)}</td>
+                <td className={a.ok ? "" : "data-bad"}>{(a.ok ? a.message ?? "done" : a.message ?? "failed").replace(/ · job [0-9a-f]{16}$/, "")}</td>
               </tr>
             ))}
           </tbody>

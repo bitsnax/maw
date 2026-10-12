@@ -4,7 +4,10 @@ import type { InstallBundle } from "./machines"
 // The compose.yaml shown by Add machine (and later Reissue certificate).
 // It holds the machine's private key, so it is shown once and never stored.
 
-export const AGENT_IMAGE = "maw-agent:0.1.0"
+// The agent version this MAW expects; machines on an older one are offered
+// an update (lib/machines.ts agentUpdate). Change both with the agent.
+export const AGENT_VERSION = "0.2.0"
+export const AGENT_IMAGE = `maw-agent:${AGENT_VERSION}`
 export const AGENT_DIR = "/opt/maw-agent"
 
 function block(pem: string, indent: string): string {

@@ -194,6 +194,9 @@ function jobs(): ExecManager {
 //   {"type":"end", ...status}        last line; then the response ends
 function streamJob(res: ServerResponse, id: string, after: number) {
   res.writeHead(200, { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" })
+  // Send the headers now: Node holds them until the first body write, and a
+  // quiet command (sleep 300) writes nothing until the first ping, 15 s on.
+  res.flushHeaders()
   const write = (o: Json) => { if (!res.writableEnded) res.write(JSON.stringify(o) + "\n") }
   let ping: NodeJS.Timeout | null = null
   const done = () => { if (ping) clearInterval(ping); if (!res.writableEnded) res.end() }
