@@ -6,7 +6,10 @@ import { adminSession } from "@/lib/admin-session"
 import { prisma } from "@/lib/prisma"
 import {
   createMachine, runContainerAction, getContainerLogs, reissueMachineCert, removeMachine,
+  listMachineDir, readMachineFile, searchMachineFiles, globMachineFiles,
+  startMachineCommand, getMachineCommand, stopMachineCommand, listMachineCommands,
   type ContainerActionName, type ContainerActionResult, type LogsResult,
+  type DirList, type FileRead, type SearchResult, type GlobResult, type CommandStatus, type CommandDetail,
 } from "@/lib/machines"
 import { installFile, AGENT_DIR, AGENT_IMAGE } from "@/lib/install-file"
 import { REMOVE_PHRASE } from "./phrases"
@@ -82,6 +85,83 @@ export async function containerLogs(machineId: string, ref: string, tail = 200):
   if (!m) return { ok: false, message: "This machine no longer exists." }
   const r = await getContainerLogs(m, ref, tail)
   return r.ok ? { ok: true, data: r.data } : { ok: false, message: r.message }
+}
+
+// ---- Console (Files, Search, Run) --------------------------------------------
+// Admin only, like everything on a machine. Reads, lists and searches are
+// not recorded; starting a command is (lib/machines.ts).
+
+async function consoleMachine(machineId: string, what: string) {
+  const session = await adminSession()
+  if (!session) return { ok: false as const, message: `Only an admin can ${what}.` }
+  const m = await machineFor(machineId)
+  if (!m) return { ok: false as const, message: "This machine no longer exists." }
+  return { ok: true as const, m, userId: session.user.id }
+}
+
+function reply<T>(r: { ok: true; data: T } | { ok: false; message: string }): ActionReply<T> {
+  return r.ok ? { ok: true, data: r.data } : { ok: false, message: r.message }
+}
+
+export async function consoleList(machineId: string, root: string, path: string): Promise<ActionReply<DirList>> {
+  const c = await consoleMachine(machineId, "browse files")
+  if (!c.ok) return c
+  return reply(await listMachineDir(c.m, root, path))
+}
+
+export async function consoleRead(machineId: string, root: string, path: string, offset = 0): Promise<ActionReply<FileRead>> {
+  const c = await consoleMachine(machineId, "read files")
+  if (!c.ok) return c
+  return reply(await readMachineFile(c.m, root, path, offset, 2000))
+}
+
+export async function consoleSearch(
+  machineId: string, root: string, pattern: string, opts: { include?: string; ignoreCase?: boolean },
+): Promise<ActionReply<SearchResult>> {
+  const c = await consoleMachine(machineId, "search files")
+  if (!c.ok) return c
+  if (!pattern) return { ok: false, message: "Enter something to search for." }
+  return reply(await searchMachineFiles(c.m, root, pattern, {
+    include: opts.include || undefined, ignoreCase: opts.ignoreCase === true,
+  }))
+}
+
+export async function consoleGlob(machineId: string, root: string, pattern: string): Promise<ActionReply<GlobResult>> {
+  const c = await consoleMachine(machineId, "search files")
+  if (!c.ok) return c
+  if (!pattern) return { ok: false, message: "Enter a file name pattern, for example *.ts." }
+  return reply(await globMachineFiles(c.m, root, pattern))
+}
+
+export async function consoleRun(
+  machineId: string, root: string, command: string, timeoutSeconds: number,
+): Promise<ActionReply<CommandStatus & { jobId: string }>> {
+  const c = await consoleMachine(machineId, "run commands")
+  if (!c.ok) return c
+  if (!command.trim()) return { ok: false, message: "Enter a command." }
+  const r = reply(await startMachineCommand(c.m, c.userId, root, command, timeoutSeconds))
+  revalidatePath(`/machines/${machineId}`)
+  return r
+}
+
+export async function consoleStatus(machineId: string, jobId: string, tail = 0): Promise<ActionReply<CommandDetail>> {
+  const c = await consoleMachine(machineId, "watch commands")
+  if (!c.ok) return c
+  return reply(await getMachineCommand(c.m, jobId, tail))
+}
+
+export async function consoleStop(machineId: string, jobId: string): Promise<ActionReply<CommandStatus>> {
+  const c = await consoleMachine(machineId, "stop commands")
+  if (!c.ok) return c
+  const r = reply(await stopMachineCommand(c.m, jobId))
+  revalidatePath(`/machines/${machineId}`)
+  return r
+}
+
+export async function consoleJobs(machineId: string): Promise<ActionReply<{ jobs: CommandStatus[] }>> {
+  const c = await consoleMachine(machineId, "watch commands")
+  if (!c.ok) return c
+  return reply(await listMachineCommands(c.m))
 }
 
 // ---- Machine settings -------------------------------------------------------

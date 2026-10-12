@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { getMachineInfo, getMachineContainers, agentUpdate, reconcileCommandRecords } from "@/lib/machines"
 import Containers from "./Containers"
 import MachineSettings from "./MachineSettings"
+import Console from "./Console"
 
 export const dynamic = "force-dynamic"
 
@@ -19,8 +20,12 @@ function when(d: Date) {
   return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
 }
 
-export default async function MachinePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function MachinePage({ params, searchParams }: {
+  params: Promise<{ id: string }>
+  searchParams: Promise<{ root?: string | string[] }>
+}) {
   const { id } = await params
+  const rootParam = (await searchParams).root
   const machine = await prisma.machine.findUnique({ where: { id } })
   if (!machine) notFound()
 
@@ -90,6 +95,22 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
         <Containers machineId={machine.id} containers={list.data.containers} />
       ) : (
         <p className="app-empty">{info.ok ? list.message : "Containers appear when the machine is online."}</p>
+      )}
+
+      <h2 className="section-title">Console</h2>
+      {!info.ok ? (
+        <p className="app-empty">The Console is available when the machine is online.</p>
+      ) : update ? (
+        <p className="app-empty">The Console needs agent {update.expected}; see the update notice above.</p>
+      ) : (
+        <Console
+          machineId={machine.id}
+          base={info.data.agent.allowedBase ?? "/opt"}
+          initialRoot={typeof rootParam === "string" && rootParam.startsWith("/") ? rootParam : info.data.agent.allowedBase ?? "/opt"}
+          runAs={machine.runAs}
+          commandsOk={commands?.ok !== false || commands?.error === "not checked yet"}
+          commandsError={commands?.error}
+        />
       )}
 
       <h2 className="section-title">Recent actions</h2>
