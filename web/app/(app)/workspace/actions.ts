@@ -6,6 +6,7 @@ import { liveStates, type LiveState } from "@/lib/session-status"
 import { removeSession, startSession } from "@/lib/sessions"
 import { listCommands } from "@/lib/project-commands"
 import { listRuns, settleRun, startRun, type RunView } from "@/lib/command-runs"
+import { STORY_STATUS, listStories, storyKey } from "@/lib/stories"
 
 // The Dashboard workspace (admin only, like Projects): the project and
 // session pickers, the project's command buttons, and button runs shown in
@@ -17,11 +18,13 @@ type Reply<T> = { ok: true; data: T } | { ok: false; message: string }
 export type WsProject = { id: string; name: string; machineName: string; root: string; active: number }
 export type WsSession = { id: string; title: string; updatedAt: string; user: string | null; live: LiveState | null }
 export type WsCommand = { id: string; title: string; command: string }
+export type WsStory = { id: string; number: number; key: string; title: string; status: string; statusLabel: string; branch: string | null }
 export type WsElsewhere = { id: string; title: string; projectId: string; projectName: string; live: LiveState }
 export type WsSnapshot = {
   projects: WsProject[]
   project: WsProject | null
   sessions: WsSession[]
+  stories: WsStory[]
   commands: WsCommand[]
   elsewhere: WsElsewhere[]
   unreachable: string | null
@@ -56,6 +59,7 @@ export async function workspaceSnapshot(projectId: string | null): Promise<Reply
       sessions: (row?.sessions ?? []).map((s) => ({
         id: s.id, title: s.title, updatedAt: s.updatedAt.toISOString(), user: s.user?.name || s.user?.email || null, live: states.get(s.id) ?? null,
       })),
+      stories: row ? (await listStories(row.id)).map((t) => ({ id: t.id, number: t.number, key: storyKey(t), title: t.title, status: t.status, statusLabel: STORY_STATUS[t.status] ?? t.status, branch: t.branch })) : [],
       commands: row ? (await listCommands(row.id)).map((c) => ({ id: c.id, title: c.title, command: c.command })) : [],
       elsewhere,
       unreachable,
@@ -79,17 +83,17 @@ export async function removeWorkspaceSession(sessionId: string): Promise<Reply<n
 
 /** Button runs shown with this session (null: those made with none open);
  *  runs that ended while nobody watched are settled first. */
-export async function workspaceRuns(projectId: string, sessionId: string | null): Promise<Reply<RunView[]>> {
+export async function workspaceRuns(projectId: string, sessionId: string | null, storyId: string | null = null): Promise<Reply<RunView[]>> {
   if (!(await adminSession())) return { ok: false, message: "The workspace is for admins." }
-  const runs = await listRuns(projectId, sessionId)
+  const runs = await listRuns(projectId, sessionId, 40, storyId)
   const settled = await Promise.all(runs.map((r) => (r.state === "running" ? settleRun(r.id) : r)))
   return { ok: true, data: settled.filter((r): r is RunView => !!r) }
 }
 
-export async function runWorkspaceCommand(commandId: string, values: Record<string, string>, sessionId: string | null): Promise<Reply<RunView>> {
+export async function runWorkspaceCommand(commandId: string, values: Record<string, string>, sessionId: string | null, storyId: string | null = null): Promise<Reply<RunView>> {
   const a = await adminSession()
   if (!a) return { ok: false, message: "Only an admin can run commands." }
-  const r = await startRun(commandId, values, sessionId, a.user.id)
+  const r = await startRun(commandId, values, sessionId, a.user.id, storyId)
   return r.ok ? { ok: true, data: r.run } : { ok: false, message: r.message }
 }
 

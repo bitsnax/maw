@@ -38,7 +38,7 @@ export type ContainerActionResult = { id: string; name: string; action: Containe
 export type LogLine = { time: string | null; stream: "stdout" | "stderr" | "tty"; text: string }
 export type LogsResult = { id: string; name: string; state: string; tail: number; lines: LogLine[] }
 
-type MachineRecord = AgentTarget & { id: string }
+export type MachineRecord = AgentTarget & { id: string }
 
 // ---- Pairing ---------------------------------------------------------------
 

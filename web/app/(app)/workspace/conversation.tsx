@@ -155,7 +155,7 @@ function renderText(text: string): ReactNode[] {
   return out
 }
 
-function inline(s: string): ReactNode[] {
+export function inline(s: string): ReactNode[] {
   return s.split(/(`[^`\n]+`)/).flatMap((x, k) => {
     if (x.startsWith("`") && x.endsWith("`") && x.length > 2) return [<code key={k}>{x.slice(1, -1)}</code>]
     return x.split(/(\*\*[^*\n]+\*\*)/).map((y, j) =>
@@ -200,4 +200,53 @@ export function QuestionCard({ q, onAnswer }: { q: OcQuestion; onAnswer: (answer
       </div>
     </div>
   )
+}
+
+// ---- markdown for stories (survey, plan, steps) ---------------------------------
+
+/** Markdown as the plan files use it: ``` code blocks, | tables |, # headings,
+ *  `- ` lists (kept as typed), **bold** and `code`. Nothing becomes HTML. */
+export function Markdown({ text, className }: { text: string; className?: string }) {
+  const out: ReactNode[] = []
+  const lines = text.replace(/\r\n/g, "\n").split("\n")
+  let para: string[] = []
+  const flush = () => {
+    if (para.length) out.push(<div key={`p${out.length}`} className="md-p">{para.map((l, i) => <span key={i}>{inline(l)}{i < para.length - 1 ? "\n" : null}</span>)}</div>)
+    para = []
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]!
+    if (/^\s*```/.test(l)) {
+      flush()
+      const body: string[] = []
+      for (i++; i < lines.length && !/^\s*```/.test(lines[i]!); i++) body.push(lines[i]!)
+      out.push(<pre key={`c${out.length}`} className="logs-body md-code">{body.join("\n")}</pre>)
+      continue
+    }
+    if (/^\s*\|.*\|\s*$/.test(l)) {
+      flush()
+      const rows: string[][] = []
+      for (; i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i]!); i++) {
+        if (/^\s*\|[\s\-|:]+\|\s*$/.test(lines[i]!)) continue
+        rows.push(lines[i]!.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()))
+      }
+      i--
+      const [head, ...body] = rows
+      out.push(
+        <div key={`t${out.length}`} className="md-table-wrap">
+          <table className="data-table md-table">
+            {head && <thead><tr>{head.map((c, k) => <th key={k}>{inline(c)}</th>)}</tr></thead>}
+            <tbody>{body.map((r, k) => <tr key={k}>{r.map((c, j) => <td key={j}>{inline(c)}</td>)}</tr>)}</tbody>
+          </table>
+        </div>,
+      )
+      continue
+    }
+    const h = /^(#{1,6})\s+(.*)$/.exec(l)
+    if (h) { flush(); out.push(<div key={`h${out.length}`} className={`md-h md-h${h[1]!.length}`}>{inline(h[2]!)}</div>); continue }
+    if (!l.trim()) { flush(); continue }
+    para.push(l)
+  }
+  flush()
+  return <div className={`md${className ? ` ${className}` : ""}`}>{out}</div>
 }

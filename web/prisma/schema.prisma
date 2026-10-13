@@ -34,6 +34,7 @@ model User {
   projectSessions ProjectSession[]
   projectCommands ProjectCommand[] @relation("ProjectCommandCreatedBy")
   commandRuns     CommandRun[]
+  storiesCreated  Story[]          @relation("StoryCreatedBy")
 
   @@map("user")
 }
@@ -170,6 +171,13 @@ model Project {
   sessions    ProjectSession[]
   commands    ProjectCommand[]
   commandRuns CommandRun[]
+  stories     Story[]
+  // Project profile, kept in MAW: facts every story session is given,
+  // verifyCommands run in order after each step, protectedBranches are never
+  // worked on.
+  profile           String   @default("")
+  verifyCommands    String[] @default([])
+  protectedBranches String[] @default([])
 
   @@unique([machineId, root])
   @@map("project")
@@ -216,13 +224,15 @@ model ProjectCommand {
 
 // One press of a project command button, shown in the Dashboard's output
 // window among the session's messages (never sent to OpenCode). `sessionId`
-// is the OpenCode session that was open (null: none); `lines` is the output
+// is the OpenCode session that was open, `storyId` the story (null: none);
+// `lines` is the output
 // once the command has ended (the last 500 lines, [{s:"o"|"e", t}]).
 model CommandRun {
   id         String    @id @default(cuid())
   projectId  String
   project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   sessionId  String?
+  storyId    String?
   userId     String?
   user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   title      String
@@ -238,4 +248,127 @@ model CommandRun {
 
   @@index([projectId, sessionId, startedAt])
   @@map("command_run")
+}
+
+// A story: work too big for one model session (65,536 tokens), carried
+// through in small ones. MAW's agent breaks the story into phases and each
+// phase into steps; every planning pass and every step is its own session.
+// The database is the record; nothing is written into the project for it.
+//   Story ─ Phase ─ Step
+// Checklist items (questions the planning sessions answer, each checked in
+// its own pass) and their findings belong to the story (phaseId null) or to
+// one phase.
+model Story {
+  id          String         @id @default(cuid())
+  projectId   String
+  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  number      Int
+  title       String
+  request     String
+  // planning, phases-ready, in-progress, paused, blocked, done
+  status      String         @default("planning")
+  branch      String?
+  // the story plan: what the phases add up to
+  overview    String         @default("")
+  outOfScope  String         @default("")
+  notes       String         @default("")
+  createdById String?
+  createdBy   User?          @relation("StoryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  phases      StoryPhase[]
+  items       StoryItem[]
+  findings    StoryFinding[]
+
+  @@unique([projectId, number])
+  @@map("story")
+}
+
+// One phase of a story: a coherent part that is planned into steps on its
+// own (its own checklist and findings), then worked step by step.
+// status: pending, planning, steps-ready, in-progress, blocked, done
+model StoryPhase {
+  id        String         @id @default(cuid())
+  storyId   String
+  story     Story          @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  number    Int
+  title     String
+  goal      String         @default("")
+  approach  String         @default("")
+  notes     String         @default("")
+  status    String         @default("pending")
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  steps     StoryStep[]
+  items     StoryItem[]
+  findings  StoryFinding[]
+
+  @@unique([storyId, number])
+  @@map("story_phase")
+}
+
+// One step of a phase: everything a fresh session needs to carry it out.
+// status: pending, in-progress, done, blocked
+model StoryStep {
+  id           String     @id @default(cuid())
+  phaseId      String
+  phase        StoryPhase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  number       Int
+  title        String
+  files        String     @default("")
+  check        Boolean    @default(false)
+  status       String     @default("pending")
+  goal         String     @default("")
+  readBudget   String     @default("")
+  context      String     @default("")
+  changes      String     @default("")
+  verification String     @default("")
+  manualCheck  String     @default("")
+  result       String     @default("")
+  verifyOutput String     @default("")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([phaseId, number])
+  @@map("story_step")
+}
+
+// A checklist item of a planning pass: a question the plan needs answered,
+// checked in its own session. `developer` marks one only you can answer.
+model StoryItem {
+  id        String         @id @default(cuid())
+  storyId   String
+  story     Story          @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  phaseId   String?
+  phase     StoryPhase?    @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  position  Int
+  text      String
+  checked   Boolean        @default(false)
+  developer Boolean        @default(false)
+  answer    String?
+  checkedAt DateTime?
+  createdAt DateTime       @default(now())
+  findings  StoryFinding[]
+
+  @@index([storyId, phaseId, position])
+  @@map("story_item")
+}
+
+// What a planning session found, recorded as it went: exact shapes copied
+// from source, which later sessions rely on instead of reading again.
+model StoryFinding {
+  id        String      @id @default(cuid())
+  storyId   String
+  story     Story       @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  phaseId   String?
+  phase     StoryPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  itemId    String?
+  item      StoryItem?  @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  position  Int
+  heading   String      @default("")
+  body      String
+  createdAt DateTime    @default(now())
+
+  @@index([storyId, phaseId, position])
+  @@map("story_finding")
 }

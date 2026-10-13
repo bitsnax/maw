@@ -9,7 +9,7 @@ import { workspaceSnapshot } from "./workspace/actions"
 
 export const dynamic = "force-dynamic"
 
-export default async function Dashboard({ searchParams }: { searchParams: Promise<{ project?: string; session?: string }> }) {
+export default async function Dashboard({ searchParams }: { searchParams: Promise<{ project?: string; session?: string; story?: string }> }) {
   const admin = await adminSession()
   if (!admin) {
     return (
@@ -20,9 +20,10 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     )
   }
   const q = await searchParams
-  // A session in the address picks its project.
+  // A session or story in the address picks its project.
   const owner = q.session ? await prisma.projectSession.findUnique({ where: { id: q.session }, select: { projectId: true } }) : null
-  const snap = await workspaceSnapshot(owner?.projectId ?? q.project ?? null)
+  const storyOwner = !owner && q.story ? await prisma.story.findUnique({ where: { id: q.story }, select: { projectId: true } }) : null
+  const snap = await workspaceSnapshot(owner?.projectId ?? storyOwner?.projectId ?? q.project ?? null)
   if (!snap.ok) return <p className="app-empty">{snap.message}</p>
-  return <Workspace initial={snap.data} initialSession={owner ? q.session! : null} />
+  return <Workspace initial={snap.data} initialSession={owner ? q.session! : null} initialStory={storyOwner ? q.story! : null} />
 }

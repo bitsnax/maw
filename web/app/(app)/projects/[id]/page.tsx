@@ -6,6 +6,9 @@ import { liveStates } from "@/lib/session-status"
 import ProjectSettings from "./ProjectSettings"
 import ProjectCommands from "../ProjectCommands"
 import { listCommands } from "@/lib/project-commands"
+import { STORY_STATUS, listStories, progress } from "@/lib/stories"
+import ProjectStories from "./ProjectStories"
+import ProjectProfile from "./ProjectProfile"
 
 export const dynamic = "force-dynamic"
 
@@ -29,7 +32,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     },
   })
   if (!project) notFound()
-  const [info, live, commands] = await Promise.all([getMachineInfo(project.machine), liveStates([project.id]), listCommands(project.id)])
+  const [info, live, commands, stories] = await Promise.all([
+    getMachineInfo(project.machine), liveStates([project.id]), listCommands(project.id), listStories(project.id),
+  ])
 
   return (
     <>
@@ -57,6 +62,17 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       <ProjectCommands projectId={project.id} root={project.root} machineName={project.machine.name}
         commands={commands.map((c) => ({ id: c.id, title: c.title, command: c.command }))} />
 
+      <h2 className="section-title">Stories</h2>
+      <ProjectStories projectId={project.id}
+        stories={stories.map((t) => {
+          const pr = progress(t)
+          return {
+            id: t.id, number: t.number, title: t.title, request: t.request, branch: t.branch,
+            status: t.status, statusLabel: STORY_STATUS[t.status] ?? t.status,
+            phases: pr.phases, steps: pr.steps ? `${pr.done} of ${pr.steps}` : "—", updated: when(t.updatedAt),
+          }
+        })} />
+
       <h2 className="section-title">Sessions</h2>
       {project.sessions.length === 0 ? (
         <p className="app-empty">No sessions yet. Start one on the <Link href={`/?project=${project.id}`} className="data-link">Dashboard</Link>.</p>
@@ -76,6 +92,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           </tbody>
         </table>
       )}
+
+      <h2 className="section-title">Project profile</h2>
+      <ProjectProfile projectId={project.id} profile={project.profile} verifyCommands={project.verifyCommands} protectedBranches={project.protectedBranches} />
 
       <h2 className="section-title">Project settings</h2>
       <ProjectSettings projectId={project.id} name={project.name} machineName={project.machine.name} root={project.root} />

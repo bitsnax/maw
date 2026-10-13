@@ -148,10 +148,23 @@ it, prompt it, watch it work, abort it.
   OpenCode), is recorded under the machine's Recent actions with Who, and is
   kept with the session (`command_run`, last 500 lines) so it survives a
   reload.
-- **Project page** (setup): command buttons, the sessions list (each opens
-  on the Dashboard), Remove project.
-- **Removing** a session deletes its conversation in OpenCode; removing a
-  project removes its sessions. Files on the machine are never touched.
+- **Project page** (setup): command buttons, stories, the sessions list
+  (each opens on the Dashboard), the project profile, Remove project.
+- **Stories** (Phase 4): work too big for one model session (65,536
+  tokens). You write a story on the project page (title, request, optional
+  branch). MAW's agent breaks it into **phases** (story planning) and each
+  phase into **steps** (phase planning), then works the steps; each planning
+  pass and each step is its own session. Checklists (questions a planning
+  pass answers, each checked in its own session; some marked for you to
+  answer) and their findings belong to the story or to a phase. MAW's
+  database is the record (`story`, `story_phase`, `story_step`,
+  `story_item`, `story_finding`); nothing is written into the project for
+  it. Pick a story in the Dashboard's second picker to follow it; its key
+  (`1-tool-count`) and branch fill the buttons' `{story}` and `{branch}`.
+  Download gives it as one markdown file for your records.
+- **Project profile** (project page, kept in MAW): the verify commands MAW
+  runs after each step, the protected branches, and the profile text every
+  story session is given.
 
 ## maw-opencode (opencode/)
 
