@@ -4,7 +4,6 @@ import { prisma } from "@/lib/prisma"
 import { getMachineInfo } from "@/lib/machines"
 import { liveStates } from "@/lib/session-status"
 import ProjectSettings from "./ProjectSettings"
-import NewSessionForm from "./NewSessionForm"
 import ProjectCommands from "../ProjectCommands"
 import { listCommands } from "@/lib/project-commands"
 
@@ -36,7 +35,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     <>
       <div className="page-head">
         <h1 className="app-title">{project.name}</h1>
-        <Link href="/projects" className="btn">Back to projects</Link>
+        <span className="settings-actions">
+          <Link href={`/?project=${project.id}`} className="btn btn-primary">Open on Dashboard</Link>
+          <Link href="/projects" className="btn">Back to projects</Link>
+        </span>
       </div>
 
       <p className="machine-facts">
@@ -51,21 +53,20 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       {!info.ok && <div className="form-alert spaced">{info.message}</div>}
       {live.unreachable && <div className="form-alert spaced">maw-opencode did not answer: {live.unreachable}</div>}
 
-      <h2 className="section-title">Commands</h2>
+      <h2 className="section-title">Command buttons</h2>
       <ProjectCommands projectId={project.id} root={project.root} machineName={project.machine.name}
         commands={commands.map((c) => ({ id: c.id, title: c.title, command: c.command }))} />
 
       <h2 className="section-title">Sessions</h2>
-      <NewSessionForm projectId={project.id} />
       {project.sessions.length === 0 ? (
-        <p className="app-empty">No sessions yet.</p>
+        <p className="app-empty">No sessions yet. Start one on the <Link href={`/?project=${project.id}`} className="data-link">Dashboard</Link>.</p>
       ) : (
         <table className="data-table">
           <thead><tr><th>Title</th><th>Status</th><th>Started</th><th>Last prompt</th><th>By</th></tr></thead>
           <tbody>
             {project.sessions.map((s) => (
               <tr key={s.id}>
-                <td><Link href={`/projects/${project.id}/sessions/${s.id}`} className="data-link">{s.title}</Link></td>
+                <td><Link href={`/?project=${project.id}&session=${s.id}`} className="data-link">{s.title}</Link></td>
                 <td><SessionState state={live.states.get(s.id)?.state} /></td>
                 <td className="data-nowrap">{when(s.createdAt)}</td>
                 <td className="data-nowrap">{s.updatedAt.getTime() - s.createdAt.getTime() > 1000 ? when(s.updatedAt) : "—"}</td>

@@ -1,10 +1,7 @@
 "use server"
 
-import { revalidatePath } from "next/cache"
-import { redirect } from "next/navigation"
 import { adminSession } from "@/lib/admin-session"
 import { prisma } from "@/lib/prisma"
-import { removeSession, startSession } from "@/lib/sessions"
 import { workspacePath } from "@/lib/workspace"
 import {
   ocAbort, ocMessages, ocPrompt, ocQuestionReject, ocQuestionReply, ocQuestions, ocStatus,
@@ -21,19 +18,6 @@ async function sessionFor(sessionId: string) {
   const s = await prisma.projectSession.findUnique({ where: { id: sessionId }, include: { project: { select: { id: true, slug: true } } } })
   if (!s) return { ok: false as const, message: "This session no longer exists." }
   return { ok: true as const, s, directory: workspacePath(s.project.slug) }
-}
-
-export type NewSessionState = { message?: string }
-
-/** New session in a project, then its page. */
-export async function newSession(projectId: string, _prev: NewSessionState, form: FormData): Promise<NewSessionState> {
-  const admin = await adminSession()
-  if (!admin) return { message: "Only an admin can start sessions." }
-  const title = String(form.get("title") ?? "").trim().slice(0, 120)
-  const r = await startSession(projectId, admin.user.id, title)
-  if (!r.ok) return { message: r.message }
-  revalidatePath(`/projects/${projectId}`)
-  redirect(`/projects/${projectId}/sessions/${r.session.id}`)
 }
 
 export type SessionSnapshot = { messages: OcMessage[]; busy: boolean; questions: OcQuestion[] }
@@ -71,13 +55,4 @@ export async function answerQuestion(sessionId: string, requestId: string, answe
   if (!c.ok) return c
   const r = answers === null ? await ocQuestionReject(c.directory, requestId) : await ocQuestionReply(c.directory, requestId, answers)
   return r.ok ? { ok: true, data: null } : { ok: false, message: r.message }
-}
-
-export async function deleteSession(sessionId: string): Promise<Reply<null>> {
-  const c = await sessionFor(sessionId)
-  if (!c.ok) return c
-  const r = await removeSession(sessionId)
-  if (!r.ok) return r
-  revalidatePath(`/projects/${c.s.project.id}`)
-  redirect(`/projects/${c.s.project.id}`)
 }

@@ -1171,7 +1171,7 @@ body {
   color: var(--text-muted-color);
 }
 
-/* --- Session (app/(app)/projects/[id]/sessions/[sid]/SessionView.tsx) */
+/* --- Conversation (app/(app)/workspace/conversation.tsx) ------------ */
 .session-new {
   display: flex;
   flex-wrap: wrap;
@@ -1389,76 +1389,6 @@ body {
   color: var(--text-muted-color);
 }
 
-/* --- Dashboard (app/(app)/DashboardLive.tsx) ------------------------- */
-.dash-active {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-.dash-card {
-  display: grid;
-  gap: 0.35rem;
-  padding: 0.85rem 1rem;
-  border: 1px solid var(--surface-border);
-  border-left: 3px solid #3b5bdb;
-  border-radius: 10px;
-  background: var(--surface-bg);
-  color: inherit;
-  text-decoration: none;
-  min-width: 0;
-}
-.dash-card:hover {
-  border-color: #c9d4ff;
-  border-left-color: #3b5bdb;
-}
-.dash-card.is-waiting {
-  border-left-color: #b54708;
-}
-.dash-card.is-retry {
-  border-left-color: #b42318;
-}
-.dash-card-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-.dash-card-title {
-  font-weight: 650;
-  color: var(--text-title-color);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.dash-state {
-  flex-shrink: 0;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: #3b5bdb;
-}
-.dash-state.is-waiting {
-  color: #b54708;
-}
-.dash-state.is-retry {
-  color: #b42318;
-}
-.dash-card-meta,
-.dash-muted {
-  font-size: 0.82rem;
-  color: var(--text-muted-color);
-}
-.dash-card-activity {
-  font-size: 0.8rem;
-  color: var(--text-title-color);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.dash-card-note {
-  font-size: 0.8rem;
-  color: #b42318;
-}
 .session-state {
   font-size: 0.82rem;
   font-weight: 600;
@@ -1583,4 +1513,237 @@ body {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 0.5rem;
+}
+
+/* --- Dashboard workspace (app/(app)/workspace/Workspace.tsx) --------- */
+.ws {
+  position: fixed;
+  top: 56px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fafbfd;
+}
+.ws-none {
+  padding: 2rem 1.25rem;
+}
+.ws-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.55rem 1.25rem;
+  background: var(--surface-bg);
+  border-bottom: 1px solid var(--surface-border);
+}
+.ws-pickers {
+  display: flex;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.ws-select {
+  width: auto;
+  max-width: 260px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+}
+.ws-session {
+  max-width: 320px;
+}
+.ws-commands {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 1;
+  min-width: 0;
+}
+.ws-cmd {
+  font-weight: 600;
+}
+.ws-setup {
+  font-size: 0.8rem;
+  color: var(--text-muted-color);
+  text-decoration: none;
+}
+.ws-setup:hover {
+  color: var(--text-title-color);
+  text-decoration: underline;
+}
+.ws-state {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+  font-size: 0.82rem;
+}
+.ws-ready {
+  color: var(--text-muted-color);
+}
+.ws-elsewhere {
+  position: relative;
+}
+.ws-elsewhere summary {
+  cursor: pointer;
+  list-style: none;
+  color: #b54708;
+  font-weight: 600;
+}
+.ws-elsewhere summary::-webkit-details-marker {
+  display: none;
+}
+.ws-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 20;
+  display: grid;
+  min-width: 280px;
+  padding: 0.3rem;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 19, 32, 0.18);
+}
+.ws-menu-item {
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.ws-menu-item:hover {
+  background: #f1f3f7;
+}
+.ws-out {
+  flex: 1;
+  overflow-y: auto;
+}
+.ws-inner {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem;
+  display: grid;
+  gap: 0.9rem;
+}
+.ws-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.75rem;
+}
+.ws-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-title-color);
+}
+.ws-where {
+  font-size: 0.85rem;
+  color: var(--text-muted-color);
+}
+.ws-remove {
+  margin-left: auto;
+  font-size: 0.82rem;
+}
+.ws-linkbtn {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-muted-color);
+}
+.ws-hint {
+  max-width: 720px;
+}
+.ws-compose {
+  background: var(--surface-bg);
+  border-top: 1px solid var(--surface-border);
+}
+.ws-compose-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+  padding-top: 0.7rem;
+  padding-bottom: 0.7rem;
+}
+.ws-input {
+  flex: 1;
+  min-height: 3rem;
+  max-height: 40vh;
+}
+.ws-run {
+  border: 1px solid var(--surface-border);
+  border-left: 3px solid #8089a0;
+  border-radius: 8px;
+  background: var(--surface-bg);
+  min-width: 0;
+}
+.ws-run.is-running {
+  border-left-color: #3b5bdb;
+}
+.ws-run.is-ok {
+  border-left-color: #1a7f37;
+}
+.ws-run.is-bad {
+  border-left-color: #b42318;
+}
+.ws-run-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.85rem;
+}
+.ws-run-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-run-title {
+  flex-shrink: 0;
+  font-weight: 650;
+  color: var(--text-title-color);
+}
+.ws-run-cmd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted-color);
+}
+.ws-run-status {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted-color);
+}
+.ws-run.is-ok .ws-run-status {
+  color: #1a7f37;
+}
+.ws-run.is-bad .ws-run-status {
+  color: #b42318;
+}
+.ws-run.is-running .ws-run-status {
+  color: #3b5bdb;
+}
+.ws-run-out {
+  margin: 0 0.5rem 0.5rem;
+  max-height: 320px;
+}
+.pcmd-table .pcmd-command {
+  word-break: break-all;
+}
+.pcmd-table .pcmd-actions-cell {
+  white-space: nowrap;
+  text-align: right;
 }

@@ -130,15 +130,26 @@ it, prompt it, watch it work, abort it.
   not show approval requests yet.
 - **Recorded.** Writes, edits and commands appear under the machine's Recent
   actions with the session's user as Who.
-- **Session page** (`/projects/<id>/sessions/<sid>`): the conversation as it
-  happens (OpenCode's events relayed by `/api/sessions/<sid>/events` as
-  NDJSON): prompts, streamed answers, thinking (folded), tool rows with
-  their output, questions the model asks (answer or dismiss), Abort, and a
-  prompt box (a prompt sent while the model works runs after the turn).
-  Under each finished turn: time, steps, context and output tokens.
-- **Dashboard** (`/`): sessions working now (or waiting for an answer), what
-  each is doing, updated every 5 s; recent sessions below. The Projects
-  list and project page show each session's status.
+- **Dashboard** (`/`) is the workspace where the work happens. A toolbar holds the
+  project picker, the session picker (or "+ New session": the first prompt
+  starts one, titled from the prompt), the project's command buttons, and
+  Working · N s / Abort. Below it the output window shows the conversation as
+  it happens (OpenCode's events relayed by `/api/sessions/<sid>/events` as
+  NDJSON: prompts, streamed answers, thinking folded, tool rows with their
+  output, questions to answer or dismiss, time and tokens per turn), with
+  button runs in time order among the messages. The prompt box is sticky at
+  the bottom; a prompt sent while the model works runs after the turn. The
+  selection is kept in the address (`/?project=…&session=…`); "N active
+  elsewhere" jumps to sessions working in other projects.
+- **Command buttons** are set up on the project page (Add command: button
+  title + command; `{name}` placeholders are asked for when pressed, each
+  value one shell word). They show in the Dashboard toolbar for that project;
+  a run happens in the project folder on its machine (never through
+  OpenCode), is recorded under the machine's Recent actions with Who, and is
+  kept with the session (`command_run`, last 500 lines) so it survives a
+  reload.
+- **Project page** (setup): command buttons, the sessions list (each opens
+  on the Dashboard), Remove project.
 - **Removing** a session deletes its conversation in OpenCode; removing a
   project removes its sessions. Files on the machine are never touched.
 

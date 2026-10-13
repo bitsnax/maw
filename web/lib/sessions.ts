@@ -26,6 +26,7 @@ export async function removeSession(sessionId: string) {
   const s = await prisma.projectSession.findUnique({ where: { id: sessionId }, include: { project: true } })
   if (!s) return { ok: false as const, message: "This session no longer exists." }
   await ocDeleteSession(`/workspaces/${s.project.slug}`, s.id)
+  await prisma.commandRun.deleteMany({ where: { sessionId: s.id } })
   await prisma.projectSession.delete({ where: { id: s.id } })
   return { ok: true as const }
 }

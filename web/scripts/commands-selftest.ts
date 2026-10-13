@@ -12,6 +12,7 @@
 import { prisma } from "../lib/prisma"
 import { createProject, removeProject } from "../lib/projects"
 import { getMachineCommand, startMachineCommand } from "../lib/machines"
+import { listRuns, settleRun, startRun } from "../lib/command-runs"
 import {
   addCommand, checkCommandInput, fillCommand, listCommands, moveCommand, placeholders, removeCommand, updateCommand,
 } from "../lib/project-commands"
@@ -84,9 +85,23 @@ async function checkAll(machineId: string, root: string) {
     check("a value with quotes, $ and backquotes arrives as one literal word", say.ok && say.out.join("\n") === value, say)
     const rec = await prisma.machineAction.findFirst({ where: { machineId, action: "command", target: filled.ok ? filled.command : "" }, orderBy: { createdAt: "desc" } })
     check("the run is recorded under Recent actions", !!rec, rec)
+
+    console.log("runs kept for the Dashboard's output window")
+    const sr = await startRun(b.command.id, { message: value }, null, null)
+    check("a button run starts and is kept", sr.ok, sr.ok ? undefined : sr.message)
+    if (sr.ok) {
+      let v = sr.run
+      for (let i = 0; i < 60 && v.state === "running"; i++) { await sleep(500); v = (await settleRun(v.id)) ?? v }
+      check("settled: exit 0 and the output kept", v.state === "exited" && v.exitCode === 0 && JSON.stringify(v.lines) === JSON.stringify([{ s: "o", t: value }]), v)
+      const listed = await listRuns(p.project.id, null)
+      check("listed with 'no session'", listed.length === 1 && listed[0]!.id === v.id && (await listRuns(p.project.id, "ses_none")).length === 0)
+      const miss = await startRun(b.command.id, {}, null, null)
+      check("a run with a missing value is refused", !miss.ok && miss.message.includes("{message}"), miss)
+    }
   } finally {
     const r = await removeProject(p.project.id, null)
-    check("project removed (its buttons with it)", r.ok && (await prisma.projectCommand.count({ where: { projectId: p.project.id } })) === 0)
+    check("project removed (its buttons and runs with it)", r.ok && (await prisma.projectCommand.count({ where: { projectId: p.project.id } })) === 0
+      && (await prisma.commandRun.count({ where: { projectId: p.project.id } })) === 0)
   }
 }
 

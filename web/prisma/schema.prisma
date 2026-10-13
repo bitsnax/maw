@@ -33,6 +33,7 @@ model User {
   projectsCreated Project[]       @relation("ProjectCreatedBy")
   projectSessions ProjectSession[]
   projectCommands ProjectCommand[] @relation("ProjectCommandCreatedBy")
+  commandRuns     CommandRun[]
 
   @@map("user")
 }
@@ -168,6 +169,7 @@ model Project {
   updatedAt   DateTime         @updatedAt
   sessions    ProjectSession[]
   commands    ProjectCommand[]
+  commandRuns CommandRun[]
 
   @@unique([machineId, root])
   @@map("project")
@@ -210,4 +212,30 @@ model ProjectCommand {
 
   @@index([projectId, position])
   @@map("project_command")
+}
+
+// One press of a project command button, shown in the Dashboard's output
+// window among the session's messages (never sent to OpenCode). `sessionId`
+// is the OpenCode session that was open (null: none); `lines` is the output
+// once the command has ended (the last 500 lines, [{s:"o"|"e", t}]).
+model CommandRun {
+  id         String    @id @default(cuid())
+  projectId  String
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sessionId  String?
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  title      String
+  command    String
+  machineId  String
+  jobId      String
+  state      String    @default("running")
+  exitCode   Int?
+  durationMs Int?
+  lines      Json?
+  startedAt  DateTime  @default(now())
+  endedAt    DateTime?
+
+  @@index([projectId, sessionId, startedAt])
+  @@map("command_run")
 }
