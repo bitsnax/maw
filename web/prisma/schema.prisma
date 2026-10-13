@@ -269,6 +269,8 @@ model Story {
   status      String         @default("planning")
   // where Resume / Retry returns a paused or blocked story (planning or in-progress)
   resumeTo    String?
+  // why the runner is waiting before the next step (wrong or protected branch), or ""
+  runnerNote  String         @default("")
   branch      String?
   // the story plan: what the phases add up to
   overview    String         @default("")
@@ -330,6 +332,8 @@ model StoryStep {
   manualCheck  String     @default("")
   result       String     @default("")
   verifyOutput String     @default("")
+  // git status and git diff of the project after the step (uncommitted changes)
+  diff         String     @default("")
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
   jobs         StoryJob[]

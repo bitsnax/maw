@@ -105,7 +105,7 @@ function checklistMd(items: FullStory["items"]): string {
     return [head, ...fs].join("\n")
   }).join("\n")
 }
-function stepMd(p: FullStory["phases"][number], x: FullStory["phases"][number]["steps"][number]): string {
+export function stepMd(p: FullStory["phases"][number], x: FullStory["phases"][number]["steps"][number]): string {
   const sec = (h: string, t: string) => (t.trim() ? `## ${h}\n${t.trim()}\n` : "")
   return [`# Step ${p.number}.${x.number}: ${x.title}`, `Status: ${STEP_STATUS[x.status] ?? x.status}${x.check ? " · needs a developer check" : ""}`,
     x.files ? `Files: ${x.files}` : "", sec("Goal", x.goal), sec("Read budget", x.readBudget), sec("Context", x.context), sec("Changes", x.changes),

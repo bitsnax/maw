@@ -2082,3 +2082,46 @@ body {
   background: #fff8ee;
   border-color: #f6d9b0;
 }
+.story-run-check {
+  margin-top: 0.35rem;
+}
+.story-out > summary {
+  cursor: pointer;
+}
+.story-pre {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0.4rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 6px;
+  background: #0f1320;
+  color: #e6e9ef;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre;
+}
+.story-step.is-waiting-check .story-step-status,
+.story-step.is-verifying .story-step-status {
+  color: #b54708;
+}
+/* Grids that hold wide output (verify output, diffs) keep to the page width. */
+.ws-inner,
+.story,
+.story-sec,
+.story-step-body,
+.story-steps {
+  grid-template-columns: minmax(0, 1fr);
+}
+.story-step,
+.story-out {
+  min-width: 0;
+}
+.story-out {
+  display: block;
+  overflow: hidden;
+}
+.story-pre {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+}

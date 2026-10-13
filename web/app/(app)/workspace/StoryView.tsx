@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { answerStoryItem, phaseControl, storyControl, storyView, type StoryView as SV } from "./story-actions"
+import { answerStoryItem, phaseControl, stepControl, storyControl, storyView, type StoryView as SV } from "./story-actions"
 import { Markdown } from "./conversation"
 
 // A story in the Dashboard's output window:
@@ -28,7 +28,7 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   // The direction box under the bar: what it is for, and its text.
-  const [dir, setDir] = useState<{ for: "replan-phases" | "plan-steps" | "replan-steps"; text: string } | null>(null)
+  const [dir, setDir] = useState<{ for: "replan-phases" | "plan-steps" | "replan-steps" | "not-right" | "retry"; text: string } | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   const load = useCallback(async () => {
@@ -77,6 +77,17 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
     if (!r.ok) setError(r.message)
     else { setDir(null); await load() }
   }
+  // The step being worked on: the current phase's first step that is not done.
+  const step = cur && cur.status === "in-progress" ? cur.steps.find((x) => x.status !== "done") ?? null : null
+  const stepAct = async (a: "checked" | "not-right" | "retry" | "mark-done", text?: string) => {
+    if (!step) return
+    setBusy(true)
+    const r = await stepControl(step.id, a, text)
+    setBusy(false)
+    if (!r.ok) setError(r.message)
+    else { setDir(null); await load() }
+  }
+  const stepJob = step ? s.jobs.find((j) => j.label === `Step ${cur!.number}.${step.number}` && j.session) : undefined
   const forYou = s.items.filter((q) => q.developer && !q.checked).length
   const curForYou = cur ? cur.items.filter((q) => q.developer && !q.checked).length : 0
   const failed = s.status === "blocked" ? s.jobs.find((j) => j.state === "failed" || j.state === "stopped") : undefined
@@ -103,6 +114,8 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
     "replan-phases": ["What should change? (optional; the next plan of the phases reads it)", "Plan again"],
     "plan-steps": [`Direction for phase ${cur?.number ?? ""}'s steps (optional; every planning session for this phase reads it and follows it)`, "Plan steps"],
     "replan-steps": [`What should change in phase ${cur?.number ?? ""}'s steps? (optional; the next plan of the steps reads it)`, "Plan again"],
+    "not-right": [`What is not right in step ${cur?.number ?? ""}.${step?.number ?? ""}? (the step runs again, and its next session reads this)`, "Run the step again"],
+    "retry": [`Direction for step ${cur?.number ?? ""}.${step?.number ?? ""} (optional; its next session reads it and follows it)`, "Try again"],
   } as const
   const dirBox = dir && (
     <div className="story-replan">
@@ -110,8 +123,10 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
       <textarea id="st-dir" className="form-input" rows={4} value={dir.text} onChange={(e) => setDir({ ...dir, text: e.target.value })} />
       <span className="story-run-actions">
         <button type="button" className="btn btn-small" onClick={() => setDir(null)}>Cancel</button>
-        <button type="button" className="btn btn-small btn-primary" disabled={busy}
-          onClick={() => void (dir.for === "replan-phases" ? act("replan-phases", dir.text) : phaseAct(dir.for, dir.text))}>{DIR_LABEL[dir.for][1]}</button>
+        <button type="button" className="btn btn-small btn-primary"
+          disabled={busy || (dir.for === "not-right" && !dir.text.trim())}
+          onClick={() => void (dir.for === "replan-phases" ? act("replan-phases", dir.text)
+            : dir.for === "not-right" || dir.for === "retry" ? stepAct(dir.for, dir.text) : phaseAct(dir.for, dir.text))}>{DIR_LABEL[dir.for][1]}</button>
       </span>
     </div>
   )
@@ -124,7 +139,16 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
         <span className="story-run-text">Paused. Resume goes on from where {s.resumeTo === "in-progress" ? "phase planning" : "planning"} stopped.</span>
         <span className="story-run-actions"><button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void act("resume")}>Resume</button></span>
       </>)
-      case "blocked": return (<>
+      case "blocked":
+        if (step?.status === "blocked") return (<>
+          <span className="story-run-text"><strong>Blocked at step {cur!.number}.{step.number}</strong>: {lastLine(step.result) || "see the step below."} Run it again (with a direction, if it helps), or mark it done if you did it yourself.</span>
+          <span className="story-run-actions">
+            {stepJob && <button type="button" className="btn btn-small" onClick={() => onOpenSession(stepJob.sessionId)}>Open session</button>}
+            <button type="button" className="btn btn-small" disabled={busy} onClick={() => void stepAct("mark-done")}>Mark done</button>
+            <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => setDir({ for: "retry", text: "" })}>Try again…</button>
+          </span>
+        </>)
+        return (<>
         <span className="story-run-text"><strong>Blocked</strong>{failed ? ` at ${failed.label}: ${failed.note}` : "."} Retry runs that part again.</span>
         <span className="story-run-actions">
           {failed?.session && <button type="button" className="btn btn-small" onClick={() => onOpenSession(failed.sessionId)}>Open session</button>}
@@ -139,6 +163,7 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
         </span>
       </>)
       case "in-progress":
+        if (step?.status === "verifying") return <span className="story-run-text"><span className="chat-working">Verifying</span> step {cur!.number}.{step.number}: MAW is running the project&apos;s verify commands.</span>
         if (s.now) return working(0, "")
         if (!cur) return <span className="story-run-text">Every phase is done.</span>
         if (cur.status === "pending") return (<>
@@ -156,7 +181,20 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
             <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void phaseAct("approve-steps")}>Approve steps</button>
           </span>
         </>)
-        return <span className="story-run-text">Phase {cur.number}&apos;s steps are approved. MAW does not carry out steps yet (that comes in the next MAW update), so nothing runs for this story until then.</span>
+        // The phase is in progress: its steps are carried out one by one.
+        if (step?.status === "waiting-check") return (<>
+          <div className="story-run-text">
+            <strong>Step {cur.number}.{step.number} needs your check.</strong> Its changes passed the verify commands.
+            {step.manualCheck.trim() && <div className="story-run-check"><Markdown text={step.manualCheck} /></div>}
+          </div>
+          <span className="story-run-actions">
+            <button type="button" className="btn btn-small" disabled={busy} onClick={() => setDir({ for: "not-right", text: "" })}>Not right…</button>
+            <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void stepAct("checked")}>Checked</button>
+          </span>
+        </>)
+        if (s.runnerNote) return <span className="story-run-text">Waiting: {s.runnerNote}</span>
+        return working(0, "")
+      case "done": return <span className="story-run-text">Done: every phase is done. The changes are in the project&apos;s working tree; commit and merge them with your buttons.</span>
       default: return null
     }
   })()
@@ -229,10 +267,16 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
                     <div className="story-step-body">
                       {x.files && <div className="story-meta">Files: <span className="data-mono">{x.files}</span></div>}
                       {([["Goal", x.goal], ["Read budget", x.readBudget], ["Context", x.context], ["Changes", x.changes], ["Verification", x.verification],
-                        ["Manual check", x.manualCheck], ["Result", x.result], ["Verify output", x.verifyOutput]] as const)
+                        ["Manual check", x.manualCheck], ["Result", x.result]] as const)
                         .filter(([, t]) => t.trim()).map(([h, t]) => (
                           <div key={h} className="story-sub"><div className="story-sub-h">{h}</div><Markdown text={t} /></div>
                         ))}
+                      {x.verifyOutput.trim() && (
+                        <details className="story-sub story-out"><summary className="story-sub-h">Verify output</summary><pre className="story-pre">{x.verifyOutput}</pre></details>
+                      )}
+                      {x.diff.trim() && (
+                        <details className="story-sub story-out"><summary className="story-sub-h">Changes after this step (git status and diff, not committed)</summary><pre className="story-pre">{x.diff}</pre></details>
+                      )}
                     </div>
                   </details>
                 ))}
@@ -264,6 +308,11 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
       )}
     </div>
   )
+}
+
+/** The last line of a step's result (why it is blocked), without the "Blocked:" prefix. */
+function lastLine(t: string): string {
+  return (t.trim().split("\n").at(-1) ?? "").replace(/^Blocked: /, "")
 }
 
 /** A <details> that starts open or closed, then stays as you leave it. */

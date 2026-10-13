@@ -18,7 +18,7 @@ export const PHASE_STATUS: Record<string, string> = {
   "in-progress": "In progress", blocked: "Blocked", done: "Done",
 }
 export const STEP_STATUS: Record<string, string> = {
-  pending: "Pending", "in-progress": "In progress", done: "Done", blocked: "Blocked",
+  pending: "Pending", "in-progress": "In progress", verifying: "Verifying", "waiting-check": "Waiting for your check", done: "Done", blocked: "Blocked",
 }
 
 export type NewStoryInput = { title: string; request: string; branch?: string }

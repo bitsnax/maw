@@ -195,3 +195,37 @@ export function phaseStepsPrompt(s: FullStory, ph: Phase): string {
     "You may refine the phase with phase_plan_set {\"approach\": \"…\", \"notes\": \"…\"} first. Follow every developer's answer exactly.",
   ].join("\n")
 }
+
+// ---- carrying out a step ------------------------------------------------------------
+
+type Step = Phase["steps"][number]
+
+/** The prompt of a step session: the story plan, the phase, your answers on
+ *  it, then the step's full text (with what earlier sessions recorded). */
+export function stepPrompt(s: FullStory, ph: Phase, st: Step, stepText: string): string {
+  const answers = ph.items.filter((q) => q.answer).map((q) => `- ${q.text}: ${q.answer}`)
+  return [
+    ...common(s, `step, story ${s.number}, step ${ph.number}.${st.number}`, false),
+    "## Story plan (approved by the developer)",
+    s.overview.trim() || "(no overview)",
+    ...(s.outOfScope.trim() ? ["", "Out of scope:", s.outOfScope.trim()] : []),
+    ...(s.notes.trim() ? ["", "Notes (decisions for every session):", s.notes.trim()] : []),
+    "",
+    `## Phase ${ph.number}: ${ph.title}`,
+    `Goal: ${ph.goal.trim()}`,
+    ...(ph.approach.trim() ? [`Approach: ${ph.approach.trim()}`] : []),
+    ...(ph.notes.trim() ? [`Notes: ${ph.notes.trim()}`] : []),
+    ...(answers.length ? ["", "The developer's answers for this phase (follow them exactly):", ...answers] : []),
+    "",
+    stepText,
+    ...(st.verifyOutput.trim() ? ["", "## The verify commands' output after the last try (fix what failed)", "```", st.verifyOutput.trim().slice(-6000), "```"] : []),
+    "",
+    `## Your task: carry out step ${ph.number}.${st.number}`,
+    "- Read what the read budget names, then make the changes with edit and write. Change only what the step says; if something outside it must change too, make the smallest change and say so in a step_note.",
+    "- After each change, record it with step_note {\"text\": \"file: what changed\"}, so a later session can continue if this one runs out of room.",
+    "- If \"Result so far\" above has notes, an earlier session already did part of this step: check those changes are in place and continue from there. Lines starting \"Developer:\" are the developer's instructions; follow them exactly.",
+    "- Do not commit or switch branches (refused); leave the changes in the working tree for the developer.",
+    "- You may run quick checks. MAW runs the project's verify commands after you finish.",
+    "- When the changes are made: step_finish {\"status\": \"done\", \"summary\": \"what changed, file by file\"}. If the step cannot be done as written: step_finish {\"status\": \"blocked\", \"summary\": \"why, and what would unblock it\"}. Then stop.",
+  ].join("\n")
+}

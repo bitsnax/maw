@@ -6,8 +6,9 @@ import { startSession } from "./sessions"
 import { workspacePath } from "./workspace"
 import { WORKSPACES } from "./tools"
 import { ocAbort, ocMessages, ocPrompt, ocQuestionReject, ocQuestions, ocStatus } from "./opencode"
-import { checklistPrompt, itemPrompt, phaseChecklistPrompt, phaseItemPrompt, phaseStepsPrompt, phasesPrompt } from "./story-prompts"
-import type { JobKind } from "./story-tools"
+import { checklistPrompt, itemPrompt, phaseChecklistPrompt, phaseItemPrompt, phaseStepsPrompt, phasesPrompt, stepPrompt } from "./story-prompts"
+import { stepMd, type JobKind } from "./story-tools"
+import { branchProblem, projectChanges, runVerify } from "./story-steps"
 
 // The runner: MAW's own loop (scripts/runner.ts, the maw-runner service) that
 // carries stories forward one model session at a time. All its state is in
@@ -26,12 +27,22 @@ import type { JobKind } from "./story-tools"
 //   planning       phase-checklist (may add nothing) → phase-item per open item
 //                  → wait for your items → phase-steps → phase "steps-ready"
 //   steps-ready    waits for you: Approve steps (→ phase "in-progress") or Plan again
-//   in-progress    the steps are carried out (Phase 4 step 07; nothing runs yet)
+//   in-progress    its steps are carried out, one session each, in order:
+//                    pending → (branch check) step session → step_finish
+//                    → MAW runs the verify commands and records git status/diff
+//                    → done, or "waiting-check" (a step marked Check: you check it),
+//                    or blocked (the step said so, the verify failed, or
+//                    STEP_SESSIONS sessions ended without step_finish)
+//                  when every step is done the phase is done; the next phase
+//                  waits for Plan steps; the last phase done → story done.
 // A session that fails (model error, no answer, nothing recorded) sets the
 // story to "blocked" with the reason on its job; Retry on the Dashboard
 // returns it to where it was (story.resumeTo), as Resume does after Pause.
 
 export const ITEM_SESSIONS = 3
+/** Sessions on one step that may end without step_finish before it is blocked. */
+export const STEP_SESSIONS = 3
+const NOFINISH = "ended without step_finish; the next session continues from its notes"
 /** A session longer than this is stopped and counts as failed. */
 export const JOB_LIMIT_MS = 60 * 60_000
 /** Time a session gets to start answering before it counts as failed. */
@@ -45,12 +56,13 @@ export const JOB_LABEL: Record<string, string> = {
 type Log = (line: string) => void
 type Job = NonNullable<Awaited<ReturnType<typeof runningJob>>>
 type Action =
-  | { kind: "start"; job: JobKind; itemId?: string; position?: number; phaseId?: string; phaseNumber?: number }
+  | { kind: "start"; job: JobKind; itemId?: string; position?: number; phaseId?: string; phaseNumber?: number; stepId?: string; stepNumber?: number }
+  | { kind: "verify"; stepId: string }
   | { kind: "wait"; why: string }
 
 const runningJob = (projectId?: string) => prisma.storyJob.findFirst({
   where: { state: "running", ...(projectId ? { story: { projectId } } : {}) }, orderBy: { createdAt: "asc" },
-  include: { story: { include: { project: true } }, item: { select: { position: true } }, phase: { select: { number: true, status: true } } },
+  include: { story: { include: { project: true } }, item: { select: { position: true } }, phase: { select: { number: true, status: true } }, step: { select: { number: true } } },
 })
 
 // ---- heartbeat: maw-web shows whether the runner is alive -------------------------
@@ -107,6 +119,7 @@ export function currentPhase<P extends { status: string }>(s: { phases: P[] }): 
 export async function phaseAction(s: FullStory): Promise<Action> {
   const ph = currentPhase(s)
   if (!ph) return { kind: "wait", why: "every phase is done" }
+  if (ph.status === "in-progress") return stepAction(s, ph)
   if (ph.status !== "planning") return { kind: "wait", why: `phase ${ph.number} is ${ph.status}` }
   const jobs = await prisma.storyJob.findMany({ where: { phaseId: ph.id }, select: { kind: true, state: true, itemId: true } })
   const at = { phaseId: ph.id, phaseNumber: ph.number }
@@ -116,6 +129,69 @@ export async function phaseAction(s: FullStory): Promise<Action> {
   const open = await prisma.storyItem.count({ where: { phaseId: ph.id, checked: false } })
   if (open) return { kind: "wait", why: `${open} phase checklist item${open === 1 ? "" : "s"} for you` }
   return { kind: "start", job: "phase-steps", ...at }
+}
+
+// ---- steps --------------------------------------------------------------------------
+
+const branchChecks = new Map<string, { at: number; problem: string | null }>()
+const BRANCH_CHECK_MS = 20_000
+/** Self-tests: check the branch again at once. */
+export function forgetBranchChecks() { branchChecks.clear() }
+
+async function noteRunner(s: FullStory, note: string) {
+  if (s.runnerNote !== note) await prisma.story.update({ where: { id: s.id }, data: { runnerNote: note } })
+}
+
+/** The next thing a phase in progress needs: its first step that is not done. */
+async function stepAction(s: FullStory, ph: FullStory["phases"][number]): Promise<Action> {
+  const st = ph.steps.find((x) => x.status !== "done")
+  if (!st) {
+    await prisma.storyPhase.update({ where: { id: ph.id }, data: { status: "done" } })
+    const left = s.phases.filter((p) => p.id !== ph.id && p.status !== "done").length
+    if (!left) await prisma.story.updateMany({ where: { id: s.id, status: "in-progress" }, data: { status: "done", runnerNote: "" } })
+    return { kind: "wait", why: left ? `phase ${ph.number} is done` : "the story is done" }
+  }
+  const at = `${ph.number}.${st.number}`
+  if (st.status === "waiting-check") return { kind: "wait", why: `step ${at} waits for your check` }
+  if (st.status === "blocked") { await block(s.id); return { kind: "wait", why: `step ${at} is blocked` } }
+  if (st.status === "verifying") return { kind: "verify", stepId: st.id }
+  const ended = await prisma.storyJob.count({ where: { stepId: st.id, state: "done", note: NOFINISH } })
+  if (ended >= STEP_SESSIONS) {
+    await prisma.storyStep.update({ where: { id: st.id }, data: { status: "blocked", result: addLine(st.result, `MAW: ${STEP_SESSIONS} sessions ended without step_finish.`) } })
+    await block(s.id)
+    return { kind: "wait", why: `step ${at} is blocked` }
+  }
+  const seen = branchChecks.get(s.id)
+  let problem = seen && Date.now() - seen.at < BRANCH_CHECK_MS ? seen.problem : undefined
+  if (problem === undefined) {
+    problem = await branchProblem(s.projectId, s.branch)
+    branchChecks.set(s.id, { at: Date.now(), problem })
+  }
+  await noteRunner(s, problem ?? "")
+  if (problem) return { kind: "wait", why: problem }
+  return { kind: "start", job: "step", phaseId: ph.id, phaseNumber: ph.number, stepId: st.id, stepNumber: st.number }
+}
+
+const addLine = (text: string, line: string) => `${text}${text && !text.endsWith("\n") ? "\n" : ""}${line}\n`
+
+/** After step_finish done: the verify commands, the changes, then done / waiting-check / blocked. */
+async function finishStep(stepId: string, log: Log): Promise<string> {
+  const st = await prisma.storyStep.findUniqueOrThrow({ where: { id: stepId }, include: { phase: { include: { story: true } } } })
+  const story = st.phase.story
+  const at = `${st.phase.number}.${st.number}`
+  await prisma.storyStep.update({ where: { id: st.id }, data: { status: "verifying" } })
+  log(`story ${story.number}: step ${at}: running the verify commands`)
+  const v = await runVerify(story.projectId, heartbeat)
+  const diff = await projectChanges(story.projectId, heartbeat)
+  const status = !v.ok ? "blocked" : st.check ? "waiting-check" : "done"
+  await prisma.storyStep.update({
+    where: { id: st.id },
+    data: { status, verifyOutput: v.output, diff, ...(v.ok ? {} : { result: addLine(st.result, `MAW: the verify command failed: ${v.failed}`) }) },
+  })
+  if (!v.ok) await block(story.id)
+  const note = v.ok ? (st.check ? "verified; waiting for your check" : "verified") : `verify failed: ${v.failed}`
+  log(`story ${story.number}: step ${at}: ${note}`)
+  return note
 }
 
 async function nextFinding(storyId: string) {
@@ -149,6 +225,7 @@ function jobTitle(s: FullStory, a: Extract<Action, { kind: "start" }>): string {
   if (a.job === "phase-checklist") return `Story ${s.number} · phase ${a.phaseNumber} checklist`
   if (a.job === "phase-item") return `Story ${s.number} · phase ${a.phaseNumber} item ${a.position}`
   if (a.job === "phase-steps") return `Story ${s.number} · phase ${a.phaseNumber} steps`
+  if (a.job === "step") return `Story ${s.number} · step ${a.phaseNumber}.${a.stepNumber}`
   return `Story ${s.number} · phases`
 }
 
@@ -161,6 +238,7 @@ function promptFor(s: FullStory, a: Extract<Action, { kind: "start" }>): string 
   if (a.job === "phase-checklist") return phaseChecklistPrompt(s, ph)
   if (a.job === "phase-item") return phaseItemPrompt(s, ph, ph.items.find((q) => q.id === a.itemId)!)
   if (a.job === "phase-steps") return phaseStepsPrompt(s, ph)
+  if (a.job === "step") { const st = ph.steps.find((x) => x.id === a.stepId)!; return stepPrompt(s, ph, st, stepMd(ph, st)) }
   throw new Error(`the runner does not start ${a.job} sessions yet`)
 }
 
@@ -191,7 +269,8 @@ export async function startJob(s: FullStory, a: Extract<Action, { kind: "start" 
   const title = jobTitle(fresh, a)
   const ss = await startSession(s.projectId, null, title)
   if (!ss.ok) { log(`story ${s.number}: ${title}: no session: ${ss.message}`); await fail(s.id, a.job, `The session could not be started: ${ss.message}`, undefined, a.itemId, a.phaseId); return }
-  await prisma.storyJob.create({ data: { storyId: s.id, kind: a.job, itemId: a.itemId ?? null, phaseId: a.phaseId ?? null, sessionId: ss.session.id } })
+  await prisma.storyJob.create({ data: { storyId: s.id, kind: a.job, itemId: a.itemId ?? null, phaseId: a.phaseId ?? null, stepId: a.stepId ?? null, sessionId: ss.session.id } })
+  if (a.job === "step") await prisma.storyStep.updateMany({ where: { id: a.stepId, status: "pending" }, data: { status: "in-progress" } })
   const pr = await ocPrompt(ss.session.directory, ss.session.id, prompt)
   if (!pr.ok) { log(`story ${s.number}: ${title}: prompt not sent: ${pr.message}`); await fail(s.id, a.job, `The prompt could not be sent: ${pr.message}`, ss.session.id); return }
   log(`story ${s.number}: started ${title} (${ss.session.id}, prompt ${prompt.length} characters)`)
@@ -206,10 +285,11 @@ function errorText(e: unknown): string {
 }
 
 async function end(job: Job, state: "done" | "failed" | "stopped", note: string, log: Log) {
-  const where = job.phase ? (job.item ? ` ${job.phase.number}.${job.item.position}` : ` (phase ${job.phase.number})`) : job.item ? ` ${job.item.position}` : ""
+  const where = job.phase ? (job.item ? ` ${job.phase.number}.${job.item.position}` : job.step ? ` ${job.phase.number}.${job.step.number}` : ` (phase ${job.phase.number})`)
+    : job.item ? ` ${job.item.position}` : ""
   log(`story ${job.story.number}: ${JOB_LABEL[job.kind] ?? job.kind}${where} ${state}${note ? `: ${note}` : ""}`)
   if (state === "failed") { await fail(job.storyId, job.kind, note, job.sessionId); return }
-  await prisma.storyJob.update({ where: { id: job.id }, data: { state, note: (job.note || note).slice(0, 2000), endedAt: new Date() } })
+  await prisma.storyJob.update({ where: { id: job.id }, data: { state, note: (note || job.note).slice(0, 2000), endedAt: new Date() } })
 }
 
 /** What a finished session left, checked against what its kind must leave. */
@@ -241,6 +321,15 @@ async function settle(job: Job, log: Log) {
     await prisma.storyPhase.updateMany({ where: { id: job.phaseId, status: "planning" }, data: { status: "steps-ready" } })
     return
   }
+  if (job.kind === "step" && job.stepId) {
+    const st = await prisma.storyStep.findUnique({ where: { id: job.stepId }, select: { status: true } })
+    if (st?.status === "done" || st?.status === "verifying") {
+      const note = await finishStep(job.stepId, log)
+      return end(job, "done", job.note ? `${job.note.slice(0, 1500)} · ${note}` : note, log)
+    }
+    if (st?.status === "blocked") { await end(job, "done", job.note || "blocked", log); await block(job.storyId); return }
+    return end(job, "done", NOFINISH, log)
+  }
   return end(job, "done", "", log)
 }
 
@@ -250,6 +339,7 @@ function stillWanted(job: Job): string | null {
   if (job.kind.startsWith("story-")) return st === "planning" ? null : `The story is ${st}.`
   if (st !== "in-progress") return `The story is ${st}.`
   if (job.kind.startsWith("phase-") && job.phase?.status !== "planning") return `Phase ${job.phase?.number} is ${job.phase?.status ?? "gone"}.`
+  if (job.kind === "step" && job.phase?.status !== "in-progress") return `Phase ${job.phase?.number} is ${job.phase?.status ?? "gone"}.`
   return null
 }
 
@@ -299,6 +389,7 @@ export async function runnerTick(log: Log, projectId?: string): Promise<"busy" |
     if (!s || (s.status !== "planning" && s.status !== "in-progress")) continue
     const a = s.status === "planning" ? await planningAction(s) : await phaseAction(s)
     if (a.kind === "wait") continue
+    if (a.kind === "verify") { await finishStep(a.stepId, log); return "started" }
     await startJob(s, a, log)
     return "started"
   }
@@ -395,5 +486,54 @@ export async function replanSteps(phaseId: string, direction: string): Promise<R
   const r = await prisma.storyPhase.updateMany({ where: { id: phaseId, status: "steps-ready" }, data: { status: "planning" } })
   if (!r.count) return { ok: false, message: "The phase has moved on; the page shows its state now." }
   if (d) await addDirection(f.ph.storyId, phaseId, `Your direction for phase ${f.ph.number}'s steps`, d)
+  return { ok: true }
+}
+
+/** The step, checked to be the current phase's current step in a story MAW is working on. */
+async function stepFor(stepId: string, statuses: string[]) {
+  const st = await prisma.storyStep.findUnique({ where: { id: stepId }, include: { phase: { include: { story: { include: { phases: { orderBy: { number: "asc" } } } } } } } })
+  if (!st) return { ok: false as const, message: "This step no longer exists." }
+  const story = st.phase.story
+  if (story.status !== "in-progress" && story.status !== "blocked") return { ok: false as const, message: `The story is ${story.status}.` }
+  if (currentPhase(story)?.id !== st.phaseId || st.phase.status !== "in-progress") return { ok: false as const, message: "This step's phase is not the one being worked on." }
+  if (!statuses.includes(st.status)) return { ok: false as const, message: "The step has moved on; the page shows its state now." }
+  return { ok: true as const, st, story }
+}
+async function unblock(storyId: string) {
+  await prisma.story.updateMany({ where: { id: storyId, status: "blocked" }, data: { status: "in-progress", resumeTo: null } })
+}
+
+/** Your manual check of a step marked Check: right → done; not right → the step runs again with your note. */
+export async function checkStep(stepId: string, right: boolean, note: string): Promise<R> {
+  const n = note.trim()
+  if (!right && !n) return { ok: false, message: "Say what is not right; the next session reads it." }
+  if (n.length > DIRECTION_MAX) return { ok: false, message: "Keep the note under 4,000 characters." }
+  const f = await stepFor(stepId, ["waiting-check"])
+  if (!f.ok) return f
+  await prisma.storyStep.update({
+    where: { id: stepId },
+    data: right ? { status: "done", result: addLine(f.st.result, `Developer checked it${n ? `: ${n}` : "."}`) } : { status: "pending", result: addLine(f.st.result, `Developer: not right: ${n}`) },
+  })
+  return { ok: true }
+}
+
+/** A blocked step runs again (your direction, optional, is read by the next session). */
+export async function retryStep(stepId: string, direction: string): Promise<R> {
+  const d = direction.trim()
+  if (d.length > DIRECTION_MAX) return { ok: false, message: "Keep the direction under 4,000 characters." }
+  const f = await stepFor(stepId, ["blocked"])
+  if (!f.ok) return f
+  await prisma.storyJob.updateMany({ where: { stepId, note: NOFINISH }, data: { note: `${NOFINISH} (before your retry)` } })
+  await prisma.storyStep.update({ where: { id: stepId }, data: { status: "pending", result: d ? addLine(f.st.result, `Developer: ${d}`) : f.st.result } })
+  await unblock(f.story.id)
+  return { ok: true }
+}
+
+/** You did (or checked) the step yourself: it is done, and the story goes on. */
+export async function markStepDone(stepId: string): Promise<R> {
+  const f = await stepFor(stepId, ["blocked", "waiting-check"])
+  if (!f.ok) return f
+  await prisma.storyStep.update({ where: { id: stepId }, data: { status: "done", result: addLine(f.st.result, "Developer marked it done.") } })
+  await unblock(f.story.id)
   return { ok: true }
 }
