@@ -9,6 +9,10 @@
  *   planning  checklist → items (one answered, one handed to the developer
  *             after 3 sessions, one for the developer) → waits → answers →
  *             phases → phases-ready → Plan again (with a direction) → Approve
+ *   phases    phase 1: waits for Plan steps; phase 2 refused first; Plan
+ *             steps with a direction → phase checklist → item → your answer
+ *             → steps → steps-ready → Plan again → Approve steps; Pause and
+ *             Resume while in progress; phase 2: no steps → blocked → Retry
  * Usage: runner-selftest.ts <machine id> <root>
  * Environment: MAW_OPENCODE_URL, MAW_OPENCODE_PASSWORD, MAW_WORKSPACES_DIR.
  */
@@ -19,7 +23,8 @@ import { createStory, getStory, saveProfile } from "../lib/stories"
 import { ocMessages, ocStatus, type OcMessage } from "../lib/opencode"
 import { workspacePath } from "../lib/workspace"
 import {
-  ITEM_SESSIONS, approvePhases, heartbeat, pauseStory, planningAction, replanPhases, resumeStory, runnerSeen, runnerTick, stopStoryJobs,
+  ITEM_SESSIONS, approvePhases, approveSteps, heartbeat, pauseStory, phaseAction, planPhase, planningAction, replanPhases, replanSteps,
+  resumeStory, runnerSeen, runnerTick, stopStoryJobs,
 } from "../lib/story-runner"
 import { checklistPrompt } from "../lib/story-prompts"
 
@@ -114,12 +119,24 @@ async function planning(projectId: string, slug: string) {
   const st = await createStory(projectId, null, { title: "Tool count", request: REQUEST, branch: "story-tool-count" })
   if (!st.ok) { check("story", false, st); return }
   const id = st.story.id
+  // Phase planning's cues name this story's number ("phase-steps, story 3, phase 1").
+  const n = st.story.number
+  await prisma.story.update({ where: { id }, data: { request: [REQUEST,
+    `WHEN phase-checklist, story ${n}, phase 1 CALL item_add {"text":"Where is listConnections?"}`,
+    `WHEN phase-checklist, story ${n}, phase 1 CALL item_add {"text":"Badge text: (A) N tools (B) N tool(s)?","forDeveloper":true}`,
+    `WHEN phase-item, story ${n}, phase 1 CALL finding_add {"heading":"listConnections","body":"connection-actions.ts:144"}`,
+    `WHEN phase-item, story ${n}, phase 1 CALL item_check {"answered":true,"note":"At line 144."}`,
+    `WHEN phase-steps, story ${n}, phase 1 CALL step_add {"title":"Count on the server","files":"connection-actions.ts","goal":"toolCount filled","changes":"1. Add the helper."}`,
+    `WHEN phase-steps, story ${n}, phase 1 CALL step_add {"title":"Show the badge","files":"ConnectionsManager.tsx","goal":"N tools shown","changes":"1. Add the span.","manualCheck":"Open settings/connections.","needsCheck":true}`,
+    `WHEN phase-checklist, story ${n}, phase 2 CALL story_read {"part":"phase","number":"2"}`,
+    `WHEN phase-steps, story ${n}, phase 2 CALL story_read {"part":"story"}`,
+  ].join("\n") } })
   const first = (await getStory(id))!
   const p0 = checklistPrompt(first)
   check("checklist prompt: session line, profile, request, the AGENTS.md note", p0.startsWith("Session: story-checklist, story ") && p0.includes("Uses Prisma 7.") && p0.includes("Count the tools of each connection") && p0.includes("handoff files"), p0.slice(0, 400))
   check("no word in the prompt sets off the mock's other cues", !/\bask\b|sleep|slow|git status/.test(p0.replace(/^WHEN .*$/gm, "")))
 
-  const waiting = async () => (await planningAction((await getStory(id))!)).kind === "wait"
+  const waiting = async () => (await prisma.storyJob.count({ where: { storyId: id, state: "running" } })) === 0 && (await planningAction((await getStory(id))!)).kind === "wait"
   await turn(projectId, async () => (await status(id)) !== "planning" || await waiting(), 240_000)
   let s = (await getStory(id))!
   const js = await jobs(id)
@@ -147,7 +164,7 @@ async function planning(projectId: string, slug: string) {
   check("overview, out of scope and 2 phases", s.overview === "Count, then show." && s.outOfScope === "No schema change." && s.phases.map((p) => p.title).join() === "Count,Show", { o: s.overview, p: s.phases.map((p) => p.title) })
   const ph = (await jobs(id)).filter((j) => j.kind === "story-phases")
   const mp = ph[0] ? await ocMessages(workspacePath(slug), ph[0].sessionId) : null
-  check("the phases prompt carries your answers", mp?.ok === true && userText(mp.data).includes("Developer's answer: Answer 2"))
+  check("the phases prompt carries your answers", mp?.ok === true && userText(mp.data).includes("Developer's answer (follow it exactly; it overrides anything above that disagrees): Answer 2"))
   check("the runner leaves it there", (await runnerTick(log, projectId)) === "idle")
 
   check("Plan again, with a direction", (await replanPhases(id, "Make the count phase first.")).ok && (await status(id)) === "planning")
@@ -159,6 +176,69 @@ async function planning(projectId: string, slug: string) {
   check("…and the new prompt carries your direction", mp2?.ok === true && userText(mp2.data).includes("Make the count phase first."))
   check("Approve phases: in progress", (await approvePhases(id)).ok && (await status(id)) === "in-progress")
   check("Approve twice: refused", !(await approvePhases(id)).ok)
+  return id
+}
+
+async function phases(projectId: string, slug: string, id: string) {
+  console.log("phase planning, phase checklist to steps")
+  let s = (await getStory(id))!
+  const [p1, p2] = s.phases
+  if (!p1 || !p2) { check("two phases to plan", false); return }
+  const ph = async (pid: string) => (await prisma.storyPhase.findUniqueOrThrow({ where: { id: pid } })).status
+  check("phase 1 waits for you (Plan steps)", (await phaseAction(s)).kind === "wait" && (await runnerTick(log, projectId)) === "idle")
+  const early = await planPhase(p2.id, "")
+  check("phase 2 cannot be planned before phase 1", !early.ok && early.message.includes("Phase 1 comes first"), early)
+  check("Plan steps (with a direction): phase 1 planning", (await planPhase(p1.id, "Fetch only the binding column.")).ok && (await ph(p1.id)) === "planning")
+  check("Plan steps twice: refused", !(await planPhase(p1.id, "")).ok)
+
+  const waiting = async () => (await prisma.storyJob.count({ where: { storyId: id, state: "running" } })) === 0 && (await phaseAction((await getStory(id))!)).kind === "wait"
+  await turn(projectId, async () => (await status(id)) !== "in-progress" || await waiting(), 180_000)
+  s = (await getStory(id))!
+  let q1 = s.phases[0]!
+  const js = (await jobs(id)).filter((j) => j.phaseId === p1.id)
+  check("phase checklist: your direction, then 2 items (item 3 for you)", q1.items.length === 3 && q1.items[0]!.answer === "Fetch only the binding column." && !q1.items[1]!.developer && q1.items[2]!.developer, q1.items.map((q) => [q.position, q.text.slice(0, 30), q.developer, q.checked]))
+  check("item 2 answered with its finding", q1.items[1]!.checked && q1.items[1]!.findings.some((f) => f.heading === "listConnections"))
+  check("jobs: phase checklist, phase item 2 — done", js.map((j) => `${j.kind}${j.item ? j.item.position : ""}:${j.state}`).join() === "phase-checklist:done,phase-item2:done", js.map((j) => `${j.kind}${j.item?.position ?? ""}:${j.state}`))
+  check("session titles name the phase", (await prisma.projectSession.findMany({ where: { id: { in: js.map((j) => j.sessionId) } } })).map((x) => x.title).sort().join("|") === [`Story ${s.number} · phase 1 checklist`, `Story ${s.number} · phase 1 item 2`].sort().join("|"))
+  const mc = js[0] ? await ocMessages(workspacePath(slug), js[0].sessionId) : null
+  const pc = mc?.ok ? userText(mc.data) : ""
+  check("phase checklist prompt: story plan, this phase, your direction, the story's answers", pc.startsWith(`Session: phase-checklist, story ${s.number}, phase 1.`) && pc.includes("Count, then show.") && pc.includes("← this session's phase") && pc.includes("Fetch only the binding column.") && pc.includes("ConnectionsTable"), pc.slice(0, 300))
+  check("no word in the phase prompts sets off the mock's other cues", !/\bask\b|sleep|slow|git status/.test(pc.replace(/^WHEN .*$/gm, "")))
+  check("waiting for your phase item", s.status === "in-progress" && await waiting() && (await ph(p1.id)) === "planning")
+
+  await prisma.storyItem.update({ where: { id: q1.items[2]!.id }, data: { answer: "A", checked: true, checkedAt: new Date() } })
+  await turn(projectId, async () => (await ph(p1.id)) !== "planning", 120_000)
+  s = (await getStory(id))!
+  q1 = s.phases[0]!
+  check("steps ready for you: 2 steps, the second needs your check", q1.status === "steps-ready" && q1.steps.length === 2 && !q1.steps[0]!.check && q1.steps[1]!.check && q1.steps[1]!.manualCheck === "Open settings/connections.", q1.steps.map((x) => [x.number, x.title, x.check]))
+  const sj = (await jobs(id)).filter((j) => j.kind === "phase-steps")
+  const ms = sj[0] ? await ocMessages(workspacePath(slug), sj[0].sessionId) : null
+  const sp = ms?.ok ? userText(ms.data) : ""
+  check("steps prompt: the phase's answers, your direction and answer, the step rules", sp.includes("At line 144.") && sp.includes("Fetch only the binding column.") && sp.includes("Developer's answer (follow it exactly") && sp.includes("readBudget") && sp.includes("65,536"), sp.slice(0, 300))
+  check("the runner leaves it there", (await runnerTick(log, projectId)) === "idle")
+
+  check("Plan again (steps), with a direction", (await replanSteps(p1.id, "Keep two steps.")).ok && (await ph(p1.id)) === "planning")
+  await turn(projectId, async () => (await ph(p1.id)) !== "planning", 120_000)
+  s = (await getStory(id))!
+  const sj2 = (await jobs(id)).filter((j) => j.phaseId === p1.id)
+  check("…only the steps were planned again (checklist kept), steps replaced", s.phases[0]!.status === "steps-ready" && s.phases[0]!.steps.length === 2 && sj2.filter((j) => j.kind === "phase-checklist").length === 1 && sj2.filter((j) => j.kind === "phase-steps").length === 2, sj2.map((j) => j.kind))
+  const ms2 = sj2.at(-1) ? await ocMessages(workspacePath(slug), sj2.at(-1)!.sessionId) : null
+  check("…and the new prompt carries the new direction", ms2?.ok === true && userText(ms2.data).includes("Keep two steps."))
+  check("Approve steps: phase 1 in progress", (await approveSteps(p1.id)).ok && (await ph(p1.id)) === "in-progress")
+  check("Approve steps twice: refused", !(await approveSteps(p1.id)).ok)
+  check("the runner has nothing to do (steps are not carried out yet)", (await runnerTick(log, projectId)) === "idle")
+
+  check("Pause while in progress", (await pauseStory(id)).ok && (await status(id)) === "paused")
+  check("Resume: back to in progress (not planning)", (await resumeStory(id)).ok && (await status(id)) === "in-progress")
+
+  console.log("phase 2: a steps session that adds nothing")
+  await prisma.storyPhase.update({ where: { id: p1.id }, data: { status: "done" } }) // as step 07 will
+  check("Plan steps: phase 2", (await planPhase(p2.id, "")).ok)
+  await turn(projectId, async () => (await status(id)) !== "in-progress", 120_000)
+  const j2 = (await jobs(id)).filter((j) => j.phaseId === p2.id)
+  check("phase 2: checklist with nothing to add, then steps failed → blocked", (await status(id)) === "blocked" && j2.map((j) => `${j.kind}:${j.state}`).join() === "phase-checklist:done,phase-steps:failed" && j2[0]!.note === "nothing to add" && j2[1]!.note.includes("without adding any steps"), j2.map((j) => [j.kind, j.state, j.note]))
+  check("Retry: back to in progress, phase 2 still planning", (await resumeStory(id)).ok && (await status(id)) === "in-progress" && (await ph(p2.id)) === "planning")
+  await stopStoryJobs(id, "test")
 }
 
 async function main() {
@@ -173,7 +253,8 @@ async function main() {
     await saveProfile(p.project.id, { profile: "Uses Prisma 7.", verifyCommands: ["true"], protectedBranches: ["main"] })
     await blocked(p.project.id)
     await pause(p.project.id, p.project.slug)
-    await planning(p.project.id, p.project.slug)
+    const id = await planning(p.project.id, p.project.slug)
+    if (id) await phases(p.project.id, p.project.slug, id)
   } finally {
     const r = await removeProject(p.project.id, null)
     check("project removed", r.ok)

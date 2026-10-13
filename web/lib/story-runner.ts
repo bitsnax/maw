@@ -6,7 +6,7 @@ import { startSession } from "./sessions"
 import { workspacePath } from "./workspace"
 import { WORKSPACES } from "./tools"
 import { ocAbort, ocMessages, ocPrompt, ocQuestionReject, ocQuestions, ocStatus } from "./opencode"
-import { checklistPrompt, itemPrompt, phasesPrompt } from "./story-prompts"
+import { checklistPrompt, itemPrompt, phaseChecklistPrompt, phaseItemPrompt, phaseStepsPrompt, phasesPrompt } from "./story-prompts"
 import type { JobKind } from "./story-tools"
 
 // The runner: MAW's own loop (scripts/runner.ts, the maw-runner service) that
@@ -21,9 +21,15 @@ import type { JobKind } from "./story-tools"
 //      (an item still open after ITEM_SESSIONS sessions is handed to the developer)
 //   3. wait while items marked for the developer are open (answered on the Dashboard)
 //   4. story-phases     the overview and the phases       → status "phases-ready"
+// Phase planning (a story "in-progress", its first phase that is not done):
+//   pending        waits for you: "Plan steps" (with a direction, optional)
+//   planning       phase-checklist (may add nothing) → phase-item per open item
+//                  → wait for your items → phase-steps → phase "steps-ready"
+//   steps-ready    waits for you: Approve steps (→ phase "in-progress") or Plan again
+//   in-progress    the steps are carried out (Phase 4 step 07; nothing runs yet)
 // A session that fails (model error, no answer, nothing recorded) sets the
 // story to "blocked" with the reason on its job; Retry on the Dashboard
-// sets it back to "planning".
+// returns it to where it was (story.resumeTo), as Resume does after Pause.
 
 export const ITEM_SESSIONS = 3
 /** A session longer than this is stopped and counts as failed. */
@@ -39,12 +45,12 @@ export const JOB_LABEL: Record<string, string> = {
 type Log = (line: string) => void
 type Job = NonNullable<Awaited<ReturnType<typeof runningJob>>>
 type Action =
-  | { kind: "start"; job: JobKind; itemId?: string; position?: number }
+  | { kind: "start"; job: JobKind; itemId?: string; position?: number; phaseId?: string; phaseNumber?: number }
   | { kind: "wait"; why: string }
 
 const runningJob = (projectId?: string) => prisma.storyJob.findFirst({
   where: { state: "running", ...(projectId ? { story: { projectId } } : {}) }, orderBy: { createdAt: "asc" },
-  include: { story: { include: { project: true } }, item: { select: { position: true } } },
+  include: { story: { include: { project: true } }, item: { select: { position: true } }, phase: { select: { number: true, status: true } } },
 })
 
 // ---- heartbeat: maw-web shows whether the runner is alive -------------------------
@@ -64,24 +70,52 @@ export function runnerSeen(): Date | null {
 
 /** The next thing story planning needs. May hand an item to the developer. */
 export async function planningAction(s: FullStory): Promise<Action> {
-  const jobs = await prisma.storyJob.findMany({ where: { storyId: s.id }, select: { kind: true, state: true, itemId: true } })
+  const jobs = await prisma.storyJob.findMany({ where: { storyId: s.id, phaseId: null }, select: { kind: true, state: true, itemId: true } })
   if (!jobs.some((j) => j.kind === "story-checklist" && j.state === "done")) return { kind: "start", job: "story-checklist" }
-  for (const q of s.items) {
+  const next = await nextItem(s.id, s.items, jobs)
+  if (next) return { kind: "start", job: "story-item", itemId: next.id, position: next.position }
+  const open = await prisma.storyItem.count({ where: { storyId: s.id, phaseId: null, checked: false } })
+  if (open) return { kind: "wait", why: `${open} checklist item${open === 1 ? "" : "s"} for you` }
+  return { kind: "start", job: "story-phases" }
+}
+
+/** The first open item the agent should take (handing to the developer any it left open ITEM_SESSIONS times). */
+async function nextItem(storyId: string, items: { id: string; position: number; checked: boolean; developer: boolean }[], jobs: { state: string; itemId: string | null }[]) {
+  for (const q of items) {
     if (q.checked || q.developer) continue
     const tried = jobs.filter((j) => j.itemId === q.id && j.state === "done").length
-    if (tried < ITEM_SESSIONS) return { kind: "start", job: "story-item", itemId: q.id, position: q.position }
+    if (tried < ITEM_SESSIONS) return q
     // Still open after ITEM_SESSIONS sessions: the developer answers it.
     await prisma.storyItem.update({ where: { id: q.id }, data: { developer: true } })
+    const it = await prisma.storyItem.findUniqueOrThrow({ where: { id: q.id }, select: { phaseId: true } })
     await prisma.storyFinding.create({
       data: {
-        storyId: s.id, itemId: q.id, position: await nextFinding(s.id), heading: "Handed to you",
+        storyId, phaseId: it.phaseId, itemId: q.id, position: await nextFinding(storyId), heading: "Handed to you",
         body: `The agent left this item open after ${ITEM_SESSIONS} sessions. Answer it from what is known (see the findings), and planning goes on.`,
       },
     })
   }
-  const open = await prisma.storyItem.count({ where: { storyId: s.id, phaseId: null, checked: false } })
-  if (open) return { kind: "wait", why: `${open} checklist item${open === 1 ? "" : "s"} for you` }
-  return { kind: "start", job: "story-phases" }
+  return null
+}
+
+/** The phase the story is at: its first phase that is not done. */
+export function currentPhase<P extends { status: string }>(s: { phases: P[] }): P | null {
+  return s.phases.find((p) => p.status !== "done") ?? null
+}
+
+/** The next thing phase planning needs (a story in progress). */
+export async function phaseAction(s: FullStory): Promise<Action> {
+  const ph = currentPhase(s)
+  if (!ph) return { kind: "wait", why: "every phase is done" }
+  if (ph.status !== "planning") return { kind: "wait", why: `phase ${ph.number} is ${ph.status}` }
+  const jobs = await prisma.storyJob.findMany({ where: { phaseId: ph.id }, select: { kind: true, state: true, itemId: true } })
+  const at = { phaseId: ph.id, phaseNumber: ph.number }
+  if (!jobs.some((j) => j.kind === "phase-checklist" && j.state === "done")) return { kind: "start", job: "phase-checklist", ...at }
+  const next = await nextItem(s.id, ph.items, jobs)
+  if (next) return { kind: "start", job: "phase-item", itemId: next.id, position: next.position, ...at }
+  const open = await prisma.storyItem.count({ where: { phaseId: ph.id, checked: false } })
+  if (open) return { kind: "wait", why: `${open} phase checklist item${open === 1 ? "" : "s"} for you` }
+  return { kind: "start", job: "phase-steps", ...at }
 }
 
 async function nextFinding(storyId: string) {
@@ -92,7 +126,7 @@ async function nextFinding(storyId: string) {
 // ---- starting a job -----------------------------------------------------------------
 
 /** Clears what an earlier, unfinished attempt at the same pass left behind. */
-async function prepare(s: FullStory, kind: JobKind) {
+async function prepare(s: FullStory, kind: JobKind, phaseId?: string) {
   if (kind === "story-checklist") {
     await prisma.storyFinding.deleteMany({ where: { storyId: s.id, phaseId: null } })
     await prisma.storyItem.deleteMany({ where: { storyId: s.id, phaseId: null } })
@@ -101,35 +135,63 @@ async function prepare(s: FullStory, kind: JobKind) {
     await prisma.storyPhase.deleteMany({ where: { storyId: s.id } })
     await prisma.story.update({ where: { id: s.id }, data: { overview: "", outOfScope: "", notes: "" } })
   }
+  // Your direction (an item you answered when you started the planning) is kept.
+  if (kind === "phase-checklist" && phaseId) {
+    await prisma.storyFinding.deleteMany({ where: { phaseId } })
+    await prisma.storyItem.deleteMany({ where: { phaseId, answer: null } })
+  }
+  if (kind === "phase-steps" && phaseId) await prisma.storyStep.deleteMany({ where: { phaseId } })
 }
 
 function jobTitle(s: FullStory, a: Extract<Action, { kind: "start" }>): string {
   if (a.job === "story-checklist") return `Story ${s.number} · checklist`
   if (a.job === "story-item") return `Story ${s.number} · item ${a.position}`
+  if (a.job === "phase-checklist") return `Story ${s.number} · phase ${a.phaseNumber} checklist`
+  if (a.job === "phase-item") return `Story ${s.number} · phase ${a.phaseNumber} item ${a.position}`
+  if (a.job === "phase-steps") return `Story ${s.number} · phase ${a.phaseNumber} steps`
   return `Story ${s.number} · phases`
 }
 
-async function fail(storyId: string, kind: string, note: string, sessionId?: string, itemId?: string) {
+function promptFor(s: FullStory, a: Extract<Action, { kind: "start" }>): string {
+  const ph = a.phaseId ? s.phases.find((p) => p.id === a.phaseId) : undefined
+  if (a.job === "story-checklist") return checklistPrompt(s)
+  if (a.job === "story-item") return itemPrompt(s, s.items.find((q) => q.id === a.itemId)!)
+  if (a.job === "story-phases") return phasesPrompt(s)
+  if (!ph) throw new Error(`no phase for ${a.job}`)
+  if (a.job === "phase-checklist") return phaseChecklistPrompt(s, ph)
+  if (a.job === "phase-item") return phaseItemPrompt(s, ph, ph.items.find((q) => q.id === a.itemId)!)
+  if (a.job === "phase-steps") return phaseStepsPrompt(s, ph)
+  throw new Error(`the runner does not start ${a.job} sessions yet`)
+}
+
+async function fail(storyId: string, kind: string, note: string, sessionId?: string, itemId?: string, phaseId?: string) {
   if (sessionId) {
     await prisma.storyJob.update({ where: { sessionId }, data: { state: "failed", note: note.slice(0, 2000), endedAt: new Date() } })
   } else {
     // No session could be started: a job row records why, with a stand-in id.
     await prisma.storyJob.create({
-      data: { storyId, kind, itemId, sessionId: `none-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, state: "failed", note: note.slice(0, 2000), endedAt: new Date() },
+      data: { storyId, kind, itemId, phaseId, sessionId: `none-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, state: "failed", note: note.slice(0, 2000), endedAt: new Date() },
     })
   }
-  await prisma.story.updateMany({ where: { id: storyId }, data: { status: "blocked" } })
+  await block(storyId)
+}
+
+/** Blocked (or paused) remembers where Retry (or Resume) goes back to. */
+async function block(storyId: string) {
+  const st = await prisma.story.findUnique({ where: { id: storyId }, select: { status: true } })
+  if (st && (st.status === "planning" || st.status === "in-progress")) {
+    await prisma.story.updateMany({ where: { id: storyId, status: st.status }, data: { status: "blocked", resumeTo: st.status } })
+  }
 }
 
 export async function startJob(s: FullStory, a: Extract<Action, { kind: "start" }>, log: Log) {
-  await prepare(s, a.job)
+  await prepare(s, a.job, a.phaseId)
   const fresh = (await getStory(s.id))!
-  const item = a.itemId ? fresh.items.find((q) => q.id === a.itemId) : undefined
-  const prompt = a.job === "story-checklist" ? checklistPrompt(fresh) : a.job === "story-item" && item ? itemPrompt(fresh, item) : phasesPrompt(fresh)
+  const prompt = promptFor(fresh, a)
   const title = jobTitle(fresh, a)
   const ss = await startSession(s.projectId, null, title)
-  if (!ss.ok) { log(`story ${s.number}: ${title}: no session: ${ss.message}`); await fail(s.id, a.job, `The session could not be started: ${ss.message}`, undefined, a.itemId); return }
-  await prisma.storyJob.create({ data: { storyId: s.id, kind: a.job, itemId: a.itemId ?? null, sessionId: ss.session.id } })
+  if (!ss.ok) { log(`story ${s.number}: ${title}: no session: ${ss.message}`); await fail(s.id, a.job, `The session could not be started: ${ss.message}`, undefined, a.itemId, a.phaseId); return }
+  await prisma.storyJob.create({ data: { storyId: s.id, kind: a.job, itemId: a.itemId ?? null, phaseId: a.phaseId ?? null, sessionId: ss.session.id } })
   const pr = await ocPrompt(ss.session.directory, ss.session.id, prompt)
   if (!pr.ok) { log(`story ${s.number}: ${title}: prompt not sent: ${pr.message}`); await fail(s.id, a.job, `The prompt could not be sent: ${pr.message}`, ss.session.id); return }
   log(`story ${s.number}: started ${title} (${ss.session.id}, prompt ${prompt.length} characters)`)
@@ -144,7 +206,8 @@ function errorText(e: unknown): string {
 }
 
 async function end(job: Job, state: "done" | "failed" | "stopped", note: string, log: Log) {
-  log(`story ${job.story.number}: ${JOB_LABEL[job.kind] ?? job.kind}${job.item ? ` ${job.item.position}` : ""} ${state}${note ? `: ${note}` : ""}`)
+  const where = job.phase ? (job.item ? ` ${job.phase.number}.${job.item.position}` : ` (phase ${job.phase.number})`) : job.item ? ` ${job.item.position}` : ""
+  log(`story ${job.story.number}: ${JOB_LABEL[job.kind] ?? job.kind}${where} ${state}${note ? `: ${note}` : ""}`)
   if (state === "failed") { await fail(job.storyId, job.kind, note, job.sessionId); return }
   await prisma.storyJob.update({ where: { id: job.id }, data: { state, note: (job.note || note).slice(0, 2000), endedAt: new Date() } })
 }
@@ -156,7 +219,7 @@ async function settle(job: Job, log: Log) {
     if (!n) return end(job, "failed", "The session ended without adding any checklist items.", log)
     return end(job, "done", `${n} checklist item${n === 1 ? "" : "s"}`, log)
   }
-  if (job.kind === "story-item" && job.itemId) {
+  if ((job.kind === "story-item" || job.kind === "phase-item") && job.itemId) {
     const q = await prisma.storyItem.findUnique({ where: { id: job.itemId }, select: { checked: true } })
     return end(job, "done", q?.checked ? "answered" : "left open for the next session", log)
   }
@@ -167,15 +230,36 @@ async function settle(job: Job, log: Log) {
     await prisma.story.updateMany({ where: { id: job.storyId, status: "planning" }, data: { status: "phases-ready" } })
     return
   }
+  if (job.kind === "phase-checklist" && job.phaseId) {
+    const n = await prisma.storyItem.count({ where: { phaseId: job.phaseId, answer: null } })
+    return end(job, "done", n ? `${n} checklist item${n === 1 ? "" : "s"}` : "nothing to add", log)
+  }
+  if (job.kind === "phase-steps" && job.phaseId) {
+    const n = await prisma.storyStep.count({ where: { phaseId: job.phaseId } })
+    if (!n) return end(job, "failed", "The session ended without adding any steps.", log)
+    await end(job, "done", `${n} step${n === 1 ? "" : "s"}`, log)
+    await prisma.storyPhase.updateMany({ where: { id: job.phaseId, status: "planning" }, data: { status: "steps-ready" } })
+    return
+  }
   return end(job, "done", "", log)
+}
+
+/** Whether the story (and phase) are still where this job's kind runs. */
+function stillWanted(job: Job): string | null {
+  const st = job.story.status
+  if (job.kind.startsWith("story-")) return st === "planning" ? null : `The story is ${st}.`
+  if (st !== "in-progress") return `The story is ${st}.`
+  if (job.kind.startsWith("phase-") && job.phase?.status !== "planning") return `Phase ${job.phase?.number} is ${job.phase?.status ?? "gone"}.`
+  return null
 }
 
 export async function checkJob(job: Job, log: Log, now = Date.now()) {
   const dir = workspacePath(job.story.project.slug)
   const age = now - job.createdAt.getTime()
-  if (job.story.status !== "planning") {
+  const gone = stillWanted(job)
+  if (gone) {
     await ocAbort(dir, job.sessionId)
-    return end(job, "stopped", `The story is ${job.story.status}.`, log)
+    return end(job, "stopped", gone, log)
   }
   const st = await ocStatus(dir, 10_000)
   if (!st.ok) { log(`OpenCode: ${st.message}`); return }
@@ -209,11 +293,11 @@ export async function runnerTick(log: Log, projectId?: string): Promise<"busy" |
   if (!projectId) heartbeat()
   const job = await runningJob(projectId)
   if (job) { await checkJob(job, log); return "busy" }
-  const stories = await prisma.story.findMany({ where: { status: "planning", ...(projectId ? { projectId } : {}) }, orderBy: { createdAt: "asc" }, select: { id: true } })
+  const stories = await prisma.story.findMany({ where: { status: { in: ["planning", "in-progress"] }, ...(projectId ? { projectId } : {}) }, orderBy: { createdAt: "asc" }, select: { id: true } })
   for (const { id } of stories) {
     const s = await getStory(id)
-    if (!s || s.status !== "planning") continue
-    const a = await planningAction(s)
+    if (!s || (s.status !== "planning" && s.status !== "in-progress")) continue
+    const a = s.status === "planning" ? await planningAction(s) : await phaseAction(s)
     if (a.kind === "wait") continue
     await startJob(s, a, log)
     return "started"
@@ -233,29 +317,83 @@ export async function stopStoryJobs(storyId: string, why: string) {
 }
 
 type R = { ok: true } | { ok: false; message: string }
-async function move(storyId: string, from: string[], to: string): Promise<R> {
-  const r = await prisma.story.updateMany({ where: { id: storyId, status: { in: from } }, data: { status: to } })
+async function move(storyId: string, from: string[], to: string, data: { resumeTo?: string | null } = {}): Promise<R> {
+  const r = await prisma.story.updateMany({ where: { id: storyId, status: { in: from } }, data: { status: to, ...data } })
   return r.count ? { ok: true } : { ok: false, message: "The story has moved on; the page shows its state now." }
 }
+const DIRECTION_MAX = 4000
 
 export async function pauseStory(storyId: string): Promise<R> {
-  const r = await move(storyId, ["planning"], "paused")
+  const st = await prisma.story.findUnique({ where: { id: storyId }, select: { status: true } })
+  if (!st || (st.status !== "planning" && st.status !== "in-progress")) return { ok: false, message: "Only a story that MAW is working on can be paused." }
+  const r = await move(storyId, [st.status], "paused", { resumeTo: st.status })
   if (r.ok) await stopStoryJobs(storyId, "Paused by you.")
   return r
 }
-/** Resume (paused) or Retry (blocked): planning goes on from where it stopped. */
-export const resumeStory = (storyId: string) => move(storyId, ["paused", "blocked"], "planning")
+/** Resume (paused) or Retry (blocked): the story goes back to where it was. */
+export async function resumeStory(storyId: string): Promise<R> {
+  const st = await prisma.story.findUnique({ where: { id: storyId }, select: { status: true, resumeTo: true } })
+  if (!st || (st.status !== "paused" && st.status !== "blocked")) return { ok: false, message: "The story has moved on; the page shows its state now." }
+  return move(storyId, [st.status], st.resumeTo === "in-progress" ? "in-progress" : "planning", { resumeTo: null })
+}
 export const approvePhases = (storyId: string) => move(storyId, ["phases-ready"], "in-progress")
+
+/** Adds your direction as an answered item on the story (phaseId null) or phase checklist. */
+async function addDirection(storyId: string, phaseId: string | null, text: string, d: string) {
+  const last = await prisma.storyItem.findFirst({ where: { storyId, phaseId }, orderBy: { position: "desc" }, select: { position: true } })
+  await prisma.storyItem.create({
+    data: { storyId, phaseId, position: (last?.position ?? 0) + 1, text, developer: true, answer: d, checked: true, checkedAt: new Date() },
+  })
+}
 
 /** Plans the phases again; your direction (optional) is kept as an answered item the next plan reads. */
 export async function replanPhases(storyId: string, direction: string): Promise<R> {
   const d = direction.trim()
-  if (d.length > 4000) return { ok: false, message: "Keep the direction under 4,000 characters." }
+  if (d.length > DIRECTION_MAX) return { ok: false, message: "Keep the direction under 4,000 characters." }
   const r = await move(storyId, ["phases-ready"], "planning")
-  if (!r.ok || !d) return r
-  const last = await prisma.storyItem.findFirst({ where: { storyId, phaseId: null }, orderBy: { position: "desc" }, select: { position: true } })
-  await prisma.storyItem.create({
-    data: { storyId, phaseId: null, position: (last?.position ?? 0) + 1, text: "Your direction for the phases", developer: true, answer: d, checked: true, checkedAt: new Date() },
-  })
+  if (r.ok && d) await addDirection(storyId, null, "Your direction for the phases", d)
   return r
+}
+
+/** The story's current phase, checked against what the button expects. */
+async function phaseFor(phaseId: string, status: string) {
+  const ph = await prisma.storyPhase.findUnique({ where: { id: phaseId }, include: { story: { include: { phases: { orderBy: { number: "asc" } } } } } })
+  if (!ph) return { ok: false as const, message: "This phase no longer exists." }
+  if (ph.story.status !== "in-progress") return { ok: false as const, message: `The story is ${ph.story.status}; the phases are approved and worked only while it is in progress.` }
+  const cur = currentPhase(ph.story)
+  if (cur?.id !== ph.id) return { ok: false as const, message: `Phase ${cur?.number ?? "?"} comes first; phases are planned one at a time, in order.` }
+  if (ph.status !== status) return { ok: false as const, message: "The phase has moved on; the page shows its state now." }
+  return { ok: true as const, ph }
+}
+
+/** Starts planning the current phase into steps; your direction (optional) is read by every session. */
+export async function planPhase(phaseId: string, direction: string): Promise<R> {
+  const d = direction.trim()
+  if (d.length > DIRECTION_MAX) return { ok: false, message: "Keep the direction under 4,000 characters." }
+  const f = await phaseFor(phaseId, "pending")
+  if (!f.ok) return f
+  const r = await prisma.storyPhase.updateMany({ where: { id: phaseId, status: "pending" }, data: { status: "planning" } })
+  if (!r.count) return { ok: false, message: "The phase has moved on; the page shows its state now." }
+  if (d) await addDirection(f.ph.storyId, phaseId, `Your direction for phase ${f.ph.number}'s steps`, d)
+  return { ok: true }
+}
+
+/** The steps are approved: the phase is in progress (its steps are carried out next). */
+export async function approveSteps(phaseId: string): Promise<R> {
+  const f = await phaseFor(phaseId, "steps-ready")
+  if (!f.ok) return f
+  const r = await prisma.storyPhase.updateMany({ where: { id: phaseId, status: "steps-ready" }, data: { status: "in-progress" } })
+  return r.count ? { ok: true } : { ok: false, message: "The phase has moved on; the page shows its state now." }
+}
+
+/** Plans the phase's steps again (its checklist is kept); your direction (optional) is read by the next plan. */
+export async function replanSteps(phaseId: string, direction: string): Promise<R> {
+  const d = direction.trim()
+  if (d.length > DIRECTION_MAX) return { ok: false, message: "Keep the direction under 4,000 characters." }
+  const f = await phaseFor(phaseId, "steps-ready")
+  if (!f.ok) return f
+  const r = await prisma.storyPhase.updateMany({ where: { id: phaseId, status: "steps-ready" }, data: { status: "planning" } })
+  if (!r.count) return { ok: false, message: "The phase has moved on; the page shows its state now." }
+  if (d) await addDirection(f.ph.storyId, phaseId, `Your direction for phase ${f.ph.number}'s steps`, d)
+  return { ok: true }
 }

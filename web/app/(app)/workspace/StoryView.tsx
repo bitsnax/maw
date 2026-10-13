@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { answerStoryItem, storyControl, storyView, type StoryView as SV } from "./story-actions"
+import { answerStoryItem, phaseControl, storyControl, storyView, type StoryView as SV } from "./story-actions"
 import { Markdown } from "./conversation"
 
 // A story in the Dashboard's output window:
@@ -27,7 +27,8 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
   const [s, setS] = useState<SV | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [replan, setReplan] = useState<string | null>(null)
+  // The direction box under the bar: what it is for, and its text.
+  const [dir, setDir] = useState<{ for: "replan-phases" | "plan-steps" | "replan-steps"; text: string } | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   const load = useCallback(async () => {
@@ -65,11 +66,100 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
     const r = await storyControl(s.id, a, direction)
     setBusy(false)
     if (!r.ok) setError(r.message)
-    else { setReplan(null); await load() }
+    else { setDir(null); await load() }
+  }
+  const cur = s.phases.find((p) => p.status !== "done") ?? null
+  const phaseAct = async (a: "plan-steps" | "approve-steps" | "replan-steps", direction?: string) => {
+    if (!cur) return
+    setBusy(true)
+    const r = await phaseControl(cur.id, a, direction)
+    setBusy(false)
+    if (!r.ok) setError(r.message)
+    else { setDir(null); await load() }
   }
   const forYou = s.items.filter((q) => q.developer && !q.checked).length
+  const curForYou = cur ? cur.items.filter((q) => q.developer && !q.checked).length : 0
   const failed = s.status === "blocked" ? s.jobs.find((j) => j.state === "failed" || j.state === "stopped") : undefined
   const runnerDown = s.runnerAge === null || s.runnerAge > 60
+  const items = (n: number) => `${n} checklist item${n === 1 ? "" : "s"}`
+
+  // What MAW's runner is doing for the story right now (planning, or planning the current phase).
+  const working = (waitingFor: number, where: string) => (<>
+    {s.now ? (
+      <span className="story-run-text"><span className="chat-working">Working</span> {s.now.job.label} · {s.now.activity} · {took(s.now.job.createdAt, null, now)}</span>
+    ) : waitingFor ? (
+      <span className="story-run-text">Waiting for you: {items(waitingFor)} {where} marked <strong>For you</strong>. Planning goes on once {waitingFor === 1 ? "it is" : "they are"} answered.</span>
+    ) : runnerDown ? (
+      <span className="story-run-text">MAW&apos;s runner is not running (the maw-runner service), so nothing is being planned.</span>
+    ) : (
+      <span className="story-run-text">Starting the next session…</span>
+    )}
+    <span className="story-run-actions">
+      {s.now?.job.session && <button type="button" className="btn btn-small" onClick={() => onOpenSession(s.now!.job.sessionId)}>Open session</button>}
+      <button type="button" className="btn btn-small" disabled={busy} onClick={() => void act("pause")}>Pause</button>
+    </span>
+  </>)
+  const DIR_LABEL = {
+    "replan-phases": ["What should change? (optional; the next plan of the phases reads it)", "Plan again"],
+    "plan-steps": [`Direction for phase ${cur?.number ?? ""}'s steps (optional; every planning session for this phase reads it and follows it)`, "Plan steps"],
+    "replan-steps": [`What should change in phase ${cur?.number ?? ""}'s steps? (optional; the next plan of the steps reads it)`, "Plan again"],
+  } as const
+  const dirBox = dir && (
+    <div className="story-replan">
+      <label className="form-label" htmlFor="st-dir">{DIR_LABEL[dir.for][0]}</label>
+      <textarea id="st-dir" className="form-input" rows={4} value={dir.text} onChange={(e) => setDir({ ...dir, text: e.target.value })} />
+      <span className="story-run-actions">
+        <button type="button" className="btn btn-small" onClick={() => setDir(null)}>Cancel</button>
+        <button type="button" className="btn btn-small btn-primary" disabled={busy}
+          onClick={() => void (dir.for === "replan-phases" ? act("replan-phases", dir.text) : phaseAct(dir.for, dir.text))}>{DIR_LABEL[dir.for][1]}</button>
+      </span>
+    </div>
+  )
+
+  const bar = (() => {
+    if (dir) return dirBox
+    switch (s.status) {
+      case "planning": return working(forYou, "in the story checklist")
+      case "paused": return (<>
+        <span className="story-run-text">Paused. Resume goes on from where {s.resumeTo === "in-progress" ? "phase planning" : "planning"} stopped.</span>
+        <span className="story-run-actions"><button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void act("resume")}>Resume</button></span>
+      </>)
+      case "blocked": return (<>
+        <span className="story-run-text"><strong>Blocked</strong>{failed ? ` at ${failed.label}: ${failed.note}` : "."} Retry runs that part again.</span>
+        <span className="story-run-actions">
+          {failed?.session && <button type="button" className="btn btn-small" onClick={() => onOpenSession(failed.sessionId)}>Open session</button>}
+          <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void act("resume")}>Retry</button>
+        </span>
+      </>)
+      case "phases-ready": return (<>
+        <span className="story-run-text">The phases are ready for you. Read them below, then approve them, or have them planned again.</span>
+        <span className="story-run-actions">
+          <button type="button" className="btn btn-small" disabled={busy} onClick={() => setDir({ for: "replan-phases", text: "" })}>Plan again…</button>
+          <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void act("approve-phases")}>Approve phases</button>
+        </span>
+      </>)
+      case "in-progress":
+        if (s.now) return working(0, "")
+        if (!cur) return <span className="story-run-text">Every phase is done.</span>
+        if (cur.status === "pending") return (<>
+          <span className="story-run-text">Phase {cur.number}, &ldquo;{cur.title}&rdquo;, is next: MAW&apos;s agent plans it into steps (what the steps still need to know, then the steps). Give it a direction first if the steps must follow something, or plan it as it is.</span>
+          <span className="story-run-actions">
+            <button type="button" className="btn btn-small" disabled={busy} onClick={() => setDir({ for: "plan-steps", text: "" })}>Add direction…</button>
+            <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void phaseAct("plan-steps")}>Plan steps</button>
+          </span>
+        </>)
+        if (cur.status === "planning") return working(curForYou, `in phase ${cur.number}'s checklist`)
+        if (cur.status === "steps-ready") return (<>
+          <span className="story-run-text">Phase {cur.number}&apos;s steps are ready for you. Read them below, then approve them, or have them planned again (its checklist is kept).</span>
+          <span className="story-run-actions">
+            <button type="button" className="btn btn-small" disabled={busy} onClick={() => setDir({ for: "replan-steps", text: "" })}>Plan again…</button>
+            <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void phaseAct("approve-steps")}>Approve steps</button>
+          </span>
+        </>)
+        return <span className="story-run-text">Phase {cur.number}&apos;s steps are approved. MAW does not carry out steps yet (that comes in the next MAW update), so nothing runs for this story until then.</span>
+      default: return null
+    }
+  })()
 
   return (
     <div className="story">
@@ -82,51 +172,7 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
         </span>
       </div>
 
-      <div className={`story-run is-${s.status}`} role="status">
-        {s.status === "planning" && (<>
-          {s.now ? (
-            <span className="story-run-text"><span className="chat-working">Working</span> {s.now.job.label} · {s.now.activity} · {took(s.now.job.createdAt, null, now)}</span>
-          ) : forYou ? (
-            <span className="story-run-text">Waiting for you: {forYou} checklist item{forYou === 1 ? "" : "s"} marked <strong>For you</strong> below. Planning goes on once {forYou === 1 ? "it is" : "they are"} answered.</span>
-          ) : runnerDown ? (
-            <span className="story-run-text">MAW&apos;s runner is not running (the maw-runner service), so planning has not started.</span>
-          ) : (
-            <span className="story-run-text">Starting the next session…</span>
-          )}
-          <span className="story-run-actions">
-            {s.now?.job.session && <button type="button" className="btn btn-small" onClick={() => onOpenSession(s.now!.job.sessionId)}>Open session</button>}
-            <button type="button" className="btn btn-small" disabled={busy} onClick={() => void act("pause")}>Pause</button>
-          </span>
-        </>)}
-        {s.status === "paused" && (<>
-          <span className="story-run-text">Paused. Resume goes on from where planning stopped.</span>
-          <span className="story-run-actions"><button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void act("resume")}>Resume</button></span>
-        </>)}
-        {s.status === "blocked" && (<>
-          <span className="story-run-text"><strong>Blocked</strong>{failed ? ` at ${failed.label}: ${failed.note}` : "."} Retry runs that part again.</span>
-          <span className="story-run-actions">
-            {failed?.session && <button type="button" className="btn btn-small" onClick={() => onOpenSession(failed.sessionId)}>Open session</button>}
-            <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void act("resume")}>Retry</button>
-          </span>
-        </>)}
-        {s.status === "phases-ready" && (replan === null ? (<>
-          <span className="story-run-text">The phases are ready for you. Read them below, then approve them, or have them planned again.</span>
-          <span className="story-run-actions">
-            <button type="button" className="btn btn-small" disabled={busy} onClick={() => setReplan("")}>Plan again…</button>
-            <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void act("approve-phases")}>Approve phases</button>
-          </span>
-        </>) : (
-          <div className="story-replan">
-            <label className="form-label" htmlFor="st-replan">What should change? (optional; the next plan reads it)</label>
-            <textarea id="st-replan" className="form-input" rows={3} value={replan} onChange={(e) => setReplan(e.target.value)} />
-            <span className="story-run-actions">
-              <button type="button" className="btn btn-small" onClick={() => setReplan(null)}>Cancel</button>
-              <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void act("replan-phases", replan)}>Plan again</button>
-            </span>
-          </div>
-        ))}
-        {s.status === "in-progress" && <span className="story-run-text">Phases approved. Next, MAW plans each phase into steps.</span>}
-      </div>
+      {bar && <div className={`story-run is-${s.status}${cur && s.status === "in-progress" ? ` is-phase-${cur.status}` : ""}`} role="status">{bar}</div>}
 
       <section className="story-sec">
         <h3 className="story-h">Request</h3>
@@ -154,7 +200,7 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
       {s.phases.map((p) => {
         const pd = p.steps.filter((x) => x.status === "done").length
         return (
-          <Fold key={p.id} className={`story-sec story-phase is-${p.status}`} defaultOpen={s.status === "phases-ready" || (p.status !== "done" && p.status !== "pending") || p.items.some((q) => q.developer && !q.checked)}>
+          <Fold key={p.id} className={`story-sec story-phase is-${p.status}`} defaultOpen={s.status === "phases-ready" || p.id === cur?.id || (p.status !== "done" && p.status !== "pending") || p.items.some((q) => q.developer && !q.checked)}>
             <summary className="story-h">
               Phase {p.number}: {p.title}
               <span className={`story-status is-${p.status}`}>{p.statusLabel}</span>

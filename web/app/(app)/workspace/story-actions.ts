@@ -7,7 +7,9 @@ import {
   PHASE_STATUS, STEP_STATUS, STORY_STATUS, createStory, getStory, removeStory, saveProfile, storyKey, updateStory,
   type NewStoryInput,
 } from "@/lib/stories"
-import { JOB_LABEL, approvePhases, pauseStory, replanPhases, resumeStory, runnerSeen, stopStoryJobs } from "@/lib/story-runner"
+import {
+  JOB_LABEL, approvePhases, approveSteps, pauseStory, planPhase, replanPhases, replanSteps, resumeStory, runnerSeen, stopStoryJobs,
+} from "@/lib/story-runner"
 import { liveStates } from "@/lib/session-status"
 
 // Stories (admin only, like Projects). Every action checks the admin itself;
@@ -20,6 +22,8 @@ type Item = { id: string; text: string; checked: boolean; developer: boolean; an
 export type StoryView = {
   id: string; projectId: string; number: number; key: string; title: string; request: string
   status: string; statusLabel: string; branch: string | null; updatedAt: string
+  /** Where Resume / Retry returns the story: planning or in-progress. */
+  resumeTo: string | null
   overview: string; outOfScope: string; notes: string
   items: Item[]; findings: Finding[]
   /** The sessions MAW ran for the story, newest first. */
@@ -73,7 +77,7 @@ export async function storyView(id: string): Promise<Reply<StoryView>> {
     ok: true,
     data: {
       id: s.id, projectId: s.projectId, number: s.number, key: storyKey(s), title: s.title, request: s.request,
-      status: s.status, statusLabel: STORY_STATUS[s.status] ?? s.status, branch: s.branch, updatedAt: s.updatedAt.toISOString(),
+      status: s.status, statusLabel: STORY_STATUS[s.status] ?? s.status, branch: s.branch, resumeTo: s.resumeTo, updatedAt: s.updatedAt.toISOString(),
       overview: s.overview, outOfScope: s.outOfScope, notes: s.notes,
       items: s.items.map(item), findings: s.findings.map(f),
       jobs, now, runnerAge: seen ? Math.max(0, Math.round((Date.now() - seen.getTime()) / 1000)) : null,
@@ -135,6 +139,15 @@ export async function storyControl(id: string, act: "pause" | "resume" | "approv
   const r = act === "pause" ? await pauseStory(id) : act === "resume" ? await resumeStory(id)
     : act === "approve-phases" ? await approvePhases(id) : act === "replan-phases" ? await replanPhases(id, direction)
     : { ok: false as const, message: "Unknown action." }
+  return r.ok ? { ok: true, data: null } : r
+}
+
+/** A phase's planning, from the Dashboard: plan its steps (with your direction,
+ *  optional), approve them, or plan them again. */
+export async function phaseControl(phaseId: string, act: "plan-steps" | "approve-steps" | "replan-steps", direction = ""): Promise<Reply<null>> {
+  if (!(await adminSession())) return { ok: false, message: "Only an admin can do that." }
+  const r = act === "plan-steps" ? await planPhase(phaseId, direction) : act === "approve-steps" ? await approveSteps(phaseId)
+    : act === "replan-steps" ? await replanSteps(phaseId, direction) : { ok: false as const, message: "Unknown action." }
   return r.ok ? { ok: true, data: null } : r
 }
 

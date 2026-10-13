@@ -2078,3 +2078,7 @@ body {
   font-size: 0.82rem;
   vertical-align: top;
 }
+.story-run.is-phase-steps-ready {
+  background: #fff8ee;
+  border-color: #f6d9b0;
+}

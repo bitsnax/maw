@@ -267,6 +267,8 @@ model Story {
   request     String
   // planning, phases-ready, in-progress, paused, blocked, done
   status      String         @default("planning")
+  // where Resume / Retry returns a paused or blocked story (planning or in-progress)
+  resumeTo    String?
   branch      String?
   // the story plan: what the phases add up to
   overview    String         @default("")
