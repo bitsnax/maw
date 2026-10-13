@@ -1481,3 +1481,106 @@ body {
 .chat-text strong {
   font-weight: 650;
 }
+
+/* --- Project command buttons (app/(app)/projects/ProjectCommands.tsx) - */
+.pcmd {
+  display: grid;
+  gap: 0.6rem;
+  margin-bottom: 1.25rem;
+}
+.pcmd-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.pcmd-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.pcmd-item.is-editing {
+  padding: 0.2rem 0.35rem;
+  border: 1px dashed var(--surface-border);
+  border-radius: 8px;
+}
+.pcmd-btn {
+  font-weight: 600;
+}
+.pcmd-tools {
+  display: inline-flex;
+  gap: 0.15rem;
+}
+.pcmd-tool {
+  padding: 0.1rem 0.35rem;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  font-size: 0.75rem;
+  color: var(--text-muted-color);
+  cursor: pointer;
+}
+.pcmd-tool:hover:not(:disabled) {
+  background: #eceff5;
+  color: var(--text-title-color);
+}
+.pcmd-tool:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.pcmd-tool.is-danger {
+  color: #b42318;
+}
+.pcmd-add {
+  border-style: dashed;
+}
+.pcmd-edit {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.pcmd-note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted-color);
+}
+.pcmd-out {
+  margin-top: 0;
+}
+.pcmd-dialog {
+  margin: 12vh auto auto;
+  width: min(560px, calc(100vw - 2rem));
+  padding: 0;
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  background: var(--surface-bg);
+  box-shadow: 0 12px 40px rgba(15, 19, 32, 0.25);
+}
+.pcmd-dialog::backdrop {
+  background: rgba(15, 19, 32, 0.45);
+}
+.pcmd-form {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1.1rem 1.25rem;
+}
+.pcmd-dialog-title {
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
+  color: var(--text-title-color);
+}
+.pcmd-help {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-muted-color);
+  word-break: break-word;
+}
+.pcmd-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}

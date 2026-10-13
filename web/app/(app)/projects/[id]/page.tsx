@@ -5,6 +5,8 @@ import { getMachineInfo } from "@/lib/machines"
 import { liveStates } from "@/lib/session-status"
 import ProjectSettings from "./ProjectSettings"
 import NewSessionForm from "./NewSessionForm"
+import ProjectCommands from "../ProjectCommands"
+import { listCommands } from "@/lib/project-commands"
 
 export const dynamic = "force-dynamic"
 
@@ -28,7 +30,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     },
   })
   if (!project) notFound()
-  const [info, live] = await Promise.all([getMachineInfo(project.machine), liveStates([project.id])])
+  const [info, live, commands] = await Promise.all([getMachineInfo(project.machine), liveStates([project.id]), listCommands(project.id)])
 
   return (
     <>
@@ -48,6 +50,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       </p>
       {!info.ok && <div className="form-alert spaced">{info.message}</div>}
       {live.unreachable && <div className="form-alert spaced">maw-opencode did not answer: {live.unreachable}</div>}
+
+      <h2 className="section-title">Commands</h2>
+      <ProjectCommands projectId={project.id} root={project.root} machineName={project.machine.name}
+        commands={commands.map((c) => ({ id: c.id, title: c.title, command: c.command }))} />
 
       <h2 className="section-title">Sessions</h2>
       <NewSessionForm projectId={project.id} />

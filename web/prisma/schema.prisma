@@ -32,6 +32,7 @@ model User {
   machineActions  MachineAction[]
   projectsCreated Project[]       @relation("ProjectCreatedBy")
   projectSessions ProjectSession[]
+  projectCommands ProjectCommand[] @relation("ProjectCommandCreatedBy")
 
   @@map("user")
 }
@@ -166,6 +167,7 @@ model Project {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   sessions    ProjectSession[]
+  commands    ProjectCommand[]
 
   @@unique([machineId, root])
   @@map("project")
@@ -187,4 +189,25 @@ model ProjectSession {
 
   @@index([projectId, createdAt])
   @@map("project_session")
+}
+
+// A button on a project's pages that runs one command in the project folder
+// on its machine (git branch, commit, push, …). The person owns these; the
+// model never runs them. `{name}` placeholders are asked for (or filled from
+// the page) when the button is pressed. Removing a project removes its
+// buttons.
+model ProjectCommand {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  command     String
+  position    Int
+  createdById String?
+  createdBy   User?    @relation("ProjectCommandCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId, position])
+  @@map("project_command")
 }
