@@ -119,6 +119,39 @@ services:
     networks:
       - maw-net
 
+  # The runner (Phase 4): MAW's loop that carries stories forward one model
+  # session at a time (web/scripts/runner.ts, lib/story-runner.ts): story
+  # checklist, one session per item, the phases; it stops where you are
+  # needed (items for you, phases to approve). All state is in the database,
+  # so it is safe to restart; one session at a time across MAW (llama.cpp
+  # has one slot). Same image as migrate (lib/ and scripts/).
+  runner:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      target: migrate
+    container_name: maw-runner
+    restart: unless-stopped
+    dns:
+      - 192.168.4.200
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      - MAW_OPENCODE_URL=http://maw-opencode:4096
+    command: ["npx", "tsx", "scripts/runner.ts"]
+    volumes:
+      # Workspaces (shared with maw-web and maw-opencode); its heartbeat file too.
+      - maw-workspaces:/workspaces
+    networks:
+      - maw-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      opencode:
+        condition: service_started
+
   # maw-agent image, built here and copied to each paired machine
   # (docker save maw-agent:0.2.0 | ssh <machine> docker load). Never started
   # by this stack: the "agent" profile keeps `docker compose up` from running it.

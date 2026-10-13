@@ -289,7 +289,7 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
           </div>
           {snap.unreachable && <div className="form-alert spaced">maw-opencode did not answer: {snap.unreachable}</div>}
 
-          {story && <StoryView storyId={story.id} />}
+          {story && <StoryView storyId={story.id} onOpenSession={(id) => { pickSession(id); void refresh(projectId) }} />}
 
           {!sessionId && !story && timeline.length === 0 && (
             <p className="app-empty ws-hint">Write the first prompt below to start a session in {project.name}. The command buttons above run in {project.root} on {project.machineName}; their output shows here and is never sent to the model.</p>
@@ -318,7 +318,7 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
         <div className="ws-inner ws-compose-row">
           <textarea
             className="form-input chat-input ws-input" rows={2} value={draft} aria-label="Prompt" disabled={!!story}
-            placeholder={story ? "MAW works a story in its own sessions (coming in the next steps); pick a session or + New session to prompt the model."
+            placeholder={story ? "MAW works a story in its own sessions (listed under Sessions); open one, or pick + New session, to prompt the model."
               : !sessionId ? `New session in ${project.name}: write a prompt. Enter sends, Shift+Enter adds a line.`
               : sess.busy ? "Write the next prompt; it is sent after the current turn." : "Write a prompt. Enter sends, Shift+Enter adds a line."}
             onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey}

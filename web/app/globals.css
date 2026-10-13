@@ -2027,3 +2027,54 @@ body {
 .pstory-dialog {
   width: min(720px, calc(100vw - 2rem));
 }
+.story-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.8rem;
+  margin: 0.7rem 0 0.2rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background: #f8f9fc;
+  font-size: 0.86rem;
+}
+.story-run.is-phases-ready {
+  background: #fff8ee;
+  border-color: #f6d9b0;
+}
+.story-run.is-blocked {
+  background: #fdf3f3;
+  border-color: #f2c4c0;
+}
+.story-run-text {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.story-run-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+.story-replan {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: 100%;
+}
+.story-status.is-running {
+  background: #eef2ff;
+  color: #3b5bdb;
+}
+.story-status.is-failed {
+  background: #fdecec;
+  color: #b42318;
+}
+.story-status.is-stopped {
+  background: #f1f3f7;
+  color: var(--text-muted-color);
+}
+.story-jobs td {
+  font-size: 0.82rem;
+  vertical-align: top;
+}

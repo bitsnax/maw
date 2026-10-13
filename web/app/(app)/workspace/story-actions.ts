@@ -7,6 +7,8 @@ import {
   PHASE_STATUS, STEP_STATUS, STORY_STATUS, createStory, getStory, removeStory, saveProfile, storyKey, updateStory,
   type NewStoryInput,
 } from "@/lib/stories"
+import { JOB_LABEL, approvePhases, pauseStory, replanPhases, resumeStory, runnerSeen, stopStoryJobs } from "@/lib/story-runner"
+import { liveStates } from "@/lib/session-status"
 
 // Stories (admin only, like Projects). Every action checks the admin itself;
 // none throws to the browser.
@@ -20,6 +22,12 @@ export type StoryView = {
   status: string; statusLabel: string; branch: string | null; updatedAt: string
   overview: string; outOfScope: string; notes: string
   items: Item[]; findings: Finding[]
+  /** The sessions MAW ran for the story, newest first. */
+  jobs: Job[]
+  /** The running session and what it is doing, if any. */
+  now: { job: Job; activity: string } | null
+  /** Seconds since the runner last went round its loop (null: never seen). */
+  runnerAge: number | null
   phases: {
     id: string; number: number; title: string; goal: string; approach: string; notes: string; status: string; statusLabel: string
     items: Item[]; findings: Finding[]
@@ -31,6 +39,11 @@ export type StoryView = {
   }[]
 }
 
+export type Job = {
+  id: string; label: string; state: string; note: string; sessionId: string; session: boolean
+  createdAt: string; endedAt: string | null
+}
+
 const f = (x: { id: string; heading: string; body: string }): Finding => ({ id: x.id, heading: x.heading, body: x.body })
 const item = (q: { id: string; text: string; checked: boolean; developer: boolean; answer: string | null; findings: Finding[] }): Item =>
   ({ id: q.id, text: q.text, checked: q.checked, developer: q.developer, answer: q.answer, findings: q.findings.map(f) })
@@ -39,6 +52,23 @@ export async function storyView(id: string): Promise<Reply<StoryView>> {
   if (!(await adminSession())) return { ok: false, message: "Stories are for admins." }
   const s = await getStory(id)
   if (!s) return { ok: false, message: "This story no longer exists." }
+  const rows = await prisma.storyJob.findMany({
+    where: { storyId: s.id }, orderBy: { createdAt: "desc" }, take: 200,
+    include: { item: { select: { position: true } }, phase: { select: { number: true } }, step: { select: { number: true } } },
+  })
+  const sessions = new Set((await prisma.projectSession.findMany({ where: { id: { in: rows.map((j) => j.sessionId) } }, select: { id: true } })).map((x) => x.id))
+  const jobs: Job[] = rows.map((j) => ({
+    id: j.id, state: j.state, note: j.note, sessionId: j.sessionId, session: sessions.has(j.sessionId),
+    label: `${JOB_LABEL[j.kind] ?? j.kind}${j.item ? ` ${j.phase ? `${j.phase.number}.` : ""}${j.item.position}` : j.step && j.phase ? ` ${j.phase.number}.${j.step.number}` : j.phase ? ` (phase ${j.phase.number})` : ""}`,
+    createdAt: j.createdAt.toISOString(), endedAt: j.endedAt?.toISOString() ?? null,
+  }))
+  const running = jobs.find((j) => j.state === "running") ?? null
+  let now: StoryView["now"] = null
+  if (running) {
+    const live = (await liveStates([s.projectId])).states.get(running.sessionId)
+    now = { job: running, activity: live?.activity ?? "Starting" }
+  }
+  const seen = runnerSeen()
   return {
     ok: true,
     data: {
@@ -46,6 +76,7 @@ export async function storyView(id: string): Promise<Reply<StoryView>> {
       status: s.status, statusLabel: STORY_STATUS[s.status] ?? s.status, branch: s.branch, updatedAt: s.updatedAt.toISOString(),
       overview: s.overview, outOfScope: s.outOfScope, notes: s.notes,
       items: s.items.map(item), findings: s.findings.map(f),
+      jobs, now, runnerAge: seen ? Math.max(0, Math.round((Date.now() - seen.getTime()) / 1000)) : null,
       phases: s.phases.map((p) => ({
         id: p.id, number: p.number, title: p.title, goal: p.goal, approach: p.approach, notes: p.notes,
         status: p.status, statusLabel: PHASE_STATUS[p.status] ?? p.status,
@@ -82,6 +113,7 @@ export async function editStory(id: string, input: NewStoryInput): Promise<Reply
 export async function deleteStory(id: string): Promise<Reply<null>> {
   if (!(await adminSession())) return { ok: false, message: "Only an admin can remove stories." }
   const s = await prisma.story.findUnique({ where: { id }, select: { projectId: true } })
+  await stopStoryJobs(id, "The story was removed.")
   await removeStory(id)
   if (s) revalidatePath(`/projects/${s.projectId}`)
   return { ok: true, data: null }
@@ -94,6 +126,16 @@ export async function answerStoryItem(itemId: string, answer: string): Promise<R
   if (!a) return { ok: false, message: "Write the answer first." }
   const q = await prisma.storyItem.update({ where: { id: itemId }, data: { answer: a, checked: true, checkedAt: new Date() } }).catch(() => null)
   return q ? { ok: true, data: null } : { ok: false, message: "This item no longer exists." }
+}
+
+/** The story's planning, from the Dashboard: pause, resume or retry, approve
+ *  the phases, or plan them again (with your direction, optional). */
+export async function storyControl(id: string, act: "pause" | "resume" | "approve-phases" | "replan-phases", direction = ""): Promise<Reply<null>> {
+  if (!(await adminSession())) return { ok: false, message: "Only an admin can do that." }
+  const r = act === "pause" ? await pauseStory(id) : act === "resume" ? await resumeStory(id)
+    : act === "approve-phases" ? await approvePhases(id) : act === "replan-phases" ? await replanPhases(id, direction)
+    : { ok: false as const, message: "Unknown action." }
+  return r.ok ? { ok: true, data: null } : r
 }
 
 export async function saveProjectProfile(projectId: string, input: { profile: string; verifyCommands: string; protectedBranches: string }): Promise<Reply<null>> {

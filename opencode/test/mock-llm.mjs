@@ -6,6 +6,9 @@
 //   prompt containing "git status": runs `git status --short --branch`
 //   prompt with lines "CALL <tool> <json args>": calls those tools in order,
 //     then answers "calls done" (story tools and refused git in the tests)
+//   lines "WHEN <text> CALL <tool> <json args>" count only when <text> is in
+//     the prompt outside such lines (the runner's sessions: one story request,
+//     different calls for "story-checklist", "story-item, item 2", …)
 //   any other prompt: write → read → edit → glob → grep → bash, then answers
 // Requests without tools (title generation) get a short title.
 import http from "node:http"
@@ -45,7 +48,9 @@ http.createServer((req, res) => {
       const done = msgs.slice(lastUser + 1).filter((m) => m.role === "tool").length
       const raw = msgs[lastUser]?.content
       const plain = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.map((p) => p?.text ?? "").join("\n") : ""
-      const calls = [...plain.matchAll(/^CALL (\w+) (\{.*\})\s*$/gm)].map((m) => [m[1], JSON.parse(m[2])])
+      const rest = plain.replace(/^(?:WHEN .*? )?CALL \w+ \{.*\}\s*$/gm, "")
+      const calls = [...plain.matchAll(/^(?:WHEN (.*?) )?CALL (\w+) (\{.*\})\s*$/gm)]
+        .filter((m) => !m[1] || rest.includes(m[1])).map((m) => [m[2], JSON.parse(m[3])])
       if (calls.length) {
         if (done < calls.length) callTool(...calls[done])
         else say("calls done")

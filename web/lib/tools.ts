@@ -393,6 +393,11 @@ export async function handleToolRequest(tool: string, req: Request): Promise<Res
       const stream = await runBash(ctx, args, req.signal)
       return new Response(stream, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no" } })
     }
+    // Story planning sessions read the project; only a step session changes it.
+    if ((tool === "write" || tool === "edit") && ctx.sessionID) {
+      const job = await jobOf(ctx.sessionID)
+      if (job && job.kind !== "step") throw new ToolError(403, `Refused: this is a planning session (${job.kind}); it reads the project and records what it finds with the story tools. Files are changed only in step sessions.`)
+    }
     const run = { read: readTool, write: writeTool, edit: editTool, glob: globTool, grep: grepTool }[tool as "read" | "write" | "edit" | "glob" | "grep"]
     const r = await run(ctx, args)
     return json(200, { ok: true, ...r })
