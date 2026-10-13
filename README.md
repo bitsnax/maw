@@ -162,6 +162,16 @@ it, prompt it, watch it work, abort it.
   it. Pick a story in the Dashboard's second picker to follow it; its key
   (`1-tool-count`) and branch fill the buttons' `{story}` and `{branch}`.
   Download gives it as one markdown file for your records.
+- **Story tools** (`opencode/config/tools/`, MAW side `web/lib/story-tools.ts`):
+  the model in a session MAW runs for a story records its work through
+  MAW's tool API like the file tools: `story_read` (story / phase N / step
+  N.M as markdown), `item_add`, `finding_add`, `item_check`,
+  `story_plan_set`, `phase_add`, `phase_plan_set`, `step_add`, `step_note`,
+  `step_finish`. The session's `story_job` row (story, phase, step or item,
+  kind) decides what the tools act on and which ones the session may use;
+  other sessions get a plain refusal. In story sessions the bash tool
+  refuses state-changing git (commit, checkout, branch, push, …) before
+  anything runs; read-only git is fine.
 - **Project profile** (project page, kept in MAW): the verify commands MAW
   runs after each step, the protected branches, and the profile text every
   story session is given.

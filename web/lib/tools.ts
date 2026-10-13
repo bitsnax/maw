@@ -1,4 +1,5 @@
 import path from "node:path"
+import { STORY_TOOL_NAMES, StoryToolError, gitWrites, handleStoryTool, jobOf, type StoryToolName } from "./story-tools"
 import { timingSafeEqual } from "node:crypto"
 import { prisma } from "./prisma"
 import {
@@ -24,7 +25,7 @@ import { shq } from "./shell"
 // bash answers NDJSON instead (see runBash).
 
 export const WORKSPACES = "/workspaces"
-export const TOOL_NAMES = ["read", "write", "edit", "glob", "grep", "bash"] as const
+export const TOOL_NAMES = ["read", "write", "edit", "glob", "grep", "bash", ...STORY_TOOL_NAMES] as const
 export type ToolName = (typeof TOOL_NAMES)[number]
 
 const READ_LIMIT = 2000
@@ -269,6 +270,12 @@ export function bashOutput(tail: OutputTail, s: Pick<CommandStatus, "state" | "e
 async function runBash(ctx: ToolContext, a: Args, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
   const command = str(a, "command") ?? ""
   if (!command.trim()) throw new ToolError(400, "command is required.")
+  // In a session MAW runs for a story, git that changes state is the
+  // developer's: refused before anything runs.
+  const writes = ctx.sessionID ? gitWrites(command) : []
+  if (writes.length && (await jobOf(ctx.sessionID))) {
+    throw new ToolError(403, `Refused: \`git ${writes.join("`, `git ")}\` changes the repository, and in story sessions git that changes state is the developer's (branch, commit, push, merge, …). Read-only git (status, diff, log, show) is fine. Leave the change in the working tree and say what should be committed.`)
+  }
   const timeoutMs = Math.min(Math.max(int(a, "timeout", 1) ?? BASH_DEFAULT_MS, 1000), BASH_MAX_MS)
   const workdir = a.workdir === undefined || a.workdir === null || a.workdir === "" ? null : mapPath(ctx, str(a, "workdir"))
   const script = workdir && workdir !== ctx.project.root ? `cd ${shq(workdir)} || exit 1\n${command}` : command
@@ -373,15 +380,24 @@ export async function handleToolRequest(tool: string, req: Request): Promise<Res
 
   try {
     const ctx = await toolContext(body.directory, body.sessionID)
+    if ((STORY_TOOL_NAMES as readonly string[]).includes(tool)) {
+      const job = await jobOf(ctx.sessionID)
+      if (job) {
+        const story = await prisma.story.findUnique({ where: { id: job.storyId }, select: { projectId: true } })
+        if (story && story.projectId !== ctx.project.id) throw new ToolError(400, "This session's story belongs to another project.")
+      }
+      const r = await handleStoryTool(tool as StoryToolName, ctx.sessionID, args)
+      return json(200, { ok: true, ...r })
+    }
     if (tool === "bash") {
       const stream = await runBash(ctx, args, req.signal)
       return new Response(stream, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no" } })
     }
-    const run = { read: readTool, write: writeTool, edit: editTool, glob: globTool, grep: grepTool }[tool as Exclude<ToolName, "bash">]
+    const run = { read: readTool, write: writeTool, edit: editTool, glob: globTool, grep: grepTool }[tool as "read" | "write" | "edit" | "glob" | "grep"]
     const r = await run(ctx, args)
     return json(200, { ok: true, ...r })
   } catch (e) {
-    if (e instanceof ToolError) return json(e.status >= 400 && e.status < 600 ? e.status : 500, { ok: false, message: e.message })
+    if (e instanceof ToolError || e instanceof StoryToolError) return json(e.status >= 400 && e.status < 600 ? e.status : 500, { ok: false, message: e.message })
     return json(500, { ok: false, message: e instanceof Error ? e.message : String(e) })
   }
 }

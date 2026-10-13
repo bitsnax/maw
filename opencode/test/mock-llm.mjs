@@ -4,6 +4,8 @@
 //   prompt containing "slow": answers after 4 s, streamed in a few pieces
 //   prompt containing "ask": calls OpenCode's question tool (two options)
 //   prompt containing "git status": runs `git status --short --branch`
+//   prompt with lines "CALL <tool> <json args>": calls those tools in order,
+//     then answers "calls done" (story tools and refused git in the tests)
 //   any other prompt: write → read → edit → glob → grep → bash, then answers
 // Requests without tools (title generation) get a short title.
 import http from "node:http"
@@ -41,6 +43,16 @@ http.createServer((req, res) => {
       msgs.forEach((m, i) => { if (m.role === "user") lastUser = i })
       const userText = JSON.stringify(msgs[lastUser]?.content ?? "")
       const done = msgs.slice(lastUser + 1).filter((m) => m.role === "tool").length
+      const raw = msgs[lastUser]?.content
+      const plain = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.map((p) => p?.text ?? "").join("\n") : ""
+      const calls = [...plain.matchAll(/^CALL (\w+) (\{.*\})\s*$/gm)].map((m) => [m[1], JSON.parse(m[2])])
+      if (calls.length) {
+        if (done < calls.length) callTool(...calls[done])
+        else say("calls done")
+        res.write("data: [DONE]\n\n")
+        res.end()
+        return
+      }
       if (/slow/.test(userText)) {
         const words = ["This ", "answer ", "came ", "slowly."]
         let i = 0

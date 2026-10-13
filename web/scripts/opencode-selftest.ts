@@ -24,6 +24,7 @@ import { startSession } from "../lib/sessions"
 import { ocAbort, ocHealth, ocMessages, ocPrompt, ocQuestionReply, ocStatus, type OcMessage, type OcPart } from "../lib/opencode"
 import { sessionEventStream } from "../lib/session-events"
 import { liveStates } from "../lib/session-status"
+import { createStory } from "../lib/stories"
 import { listMachineCommands, readMachineFile } from "../lib/machines"
 
 let failed = 0
@@ -136,6 +137,9 @@ async function mock(machineId: string, root: string) {
 
     console.log("live view (the session page's events)")
     await liveView(s.session.directory, s.session.id, p.project.id)
+
+    console.log("story tools through OpenCode")
+    await storyTools(p.project.id, s.session.directory, s.session.id)
   } finally {
     const r = await removeProject(p.project.id, null)
     check("project removed (its OpenCode session deleted too)", r.ok)
@@ -201,6 +205,47 @@ async function liveView(directory: string, id: string, projectId: string) {
     ac.abort()
     await Promise.race([pump, sleep(2000)])
   }
+}
+
+/** The story tools as the model calls them (mock cue "CALL <tool> <json>"),
+ *  and bash refusing state-changing git in a story session. */
+async function storyTools(projectId: string, directory: string, plainSession: string) {
+  const st = await createStory(projectId, null, { title: "OpenCode tools", request: "Check the story tools through OpenCode." })
+  if (!st.ok) { check("story for the test", false, st); return }
+  const storyId = st.story.id
+  const run = async (sessionId: string, prompt: string) => {
+    const pr = await ocPrompt(directory, sessionId, prompt)
+    if (!pr.ok) return { ok: false as const, message: pr.message }
+    await waitIdle(directory, sessionId, 60_000)
+    const ms = await ocMessages(directory, sessionId)
+    return ms.ok ? { ok: true as const, tools: toolParts(ms.data) } : { ok: false as const, message: ms.message }
+  }
+
+  const c = await startSession(projectId, null, "story checklist")
+  if (!c.ok) { check("session for the checklist", false, c.message); return }
+  await prisma.storyJob.create({ data: { storyId, kind: "story-checklist", sessionId: c.session.id } })
+  const r1 = await run(c.session.id, 'CALL item_add {"text":"Where is the connections page?"}\nCALL story_read {"part":"story"}')
+  const ia = r1.ok ? r1.tools.find((t) => t.tool === "item_add") : undefined
+  const sr = r1.ok ? r1.tools.find((t) => t.tool === "story_read") : undefined
+  check("item_add through OpenCode: the item is in MAW", ia?.state?.status === "completed" && (await prisma.storyItem.count({ where: { storyId } })) === 1, ia?.state)
+  check("story_read through OpenCode: the story with the new item", sr?.state?.status === "completed" && out(sr).includes("Where is the connections page?"), sr?.state)
+
+  const phase = await prisma.storyPhase.create({ data: { storyId, number: 1, title: "Count", goal: "x" } })
+  const step = await prisma.storyStep.create({ data: { phaseId: phase.id, number: 1, title: "Count function", changes: "1." } })
+  const sj = await startSession(projectId, null, "step 1.1")
+  if (!sj.ok) { check("session for the step", false, sj.message); return }
+  await prisma.storyJob.create({ data: { storyId, kind: "step", phaseId: phase.id, stepId: step.id, sessionId: sj.session.id } })
+  const r2 = await run(sj.session.id, 'CALL bash {"command":"git status --short && git commit -am wip","timeout":60000}\nCALL step_finish {"status":"done","summary":"nothing to change"}')
+  const b = r2.ok ? r2.tools.find((t) => t.tool === "bash") : undefined
+  check("bash in a story session: git commit refused, nothing run", b?.state?.status === "error" && out(b).includes("Refused: `git commit`"), b?.state)
+  const done = await prisma.storyStep.findUniqueOrThrow({ where: { id: step.id } })
+  check("step_finish through OpenCode: step done", done.status === "done" && done.result.includes("nothing to change"), done)
+
+  const r3 = await run(plainSession, 'CALL item_add {"text":"x"}\nCALL bash {"command":"git branch --show-current","timeout":60000}')
+  const ni = r3.ok ? r3.tools.filter((t) => t.tool === "item_add").at(-1) : undefined
+  const nb = r3.ok ? r3.tools.filter((t) => t.tool === "bash").at(-1) : undefined
+  check("a plain session cannot use story tools", ni?.state?.status === "error" && out(ni).includes("not one"), ni?.state)
+  check("…and its bash is not limited (git branch runs)", nb?.state?.status === "completed", nb?.state)
 }
 
 async function real(projectName: string) {

@@ -279,6 +279,7 @@ model Story {
   phases      StoryPhase[]
   items       StoryItem[]
   findings    StoryFinding[]
+  jobs        StoryJob[]
 
   @@unique([projectId, number])
   @@map("story")
@@ -302,6 +303,7 @@ model StoryPhase {
   steps     StoryStep[]
   items     StoryItem[]
   findings  StoryFinding[]
+  jobs      StoryJob[]
 
   @@unique([storyId, number])
   @@map("story_phase")
@@ -328,6 +330,7 @@ model StoryStep {
   verifyOutput String     @default("")
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
+  jobs         StoryJob[]
 
   @@unique([phaseId, number])
   @@map("story_step")
@@ -349,6 +352,7 @@ model StoryItem {
   checkedAt DateTime?
   createdAt DateTime       @default(now())
   findings  StoryFinding[]
+  jobs      StoryJob[]
 
   @@index([storyId, phaseId, position])
   @@map("story_item")
@@ -371,4 +375,35 @@ model StoryFinding {
 
   @@index([storyId, phaseId, position])
   @@map("story_finding")
+}
+
+// One model session MAW runs for a story: what it works on and how it went.
+// The story tools find their target through the session id.
+// kind: story-checklist  write the story's checklist
+//       story-item       answer one story checklist item
+//       story-phases     write the story plan and its phases
+//       phase-checklist  write one phase's checklist
+//       phase-item       answer one phase checklist item
+//       phase-steps      write one phase's plan and steps
+//       step             carry out one step
+// state: running, done, failed, stopped
+model StoryJob {
+  id        String      @id @default(cuid())
+  storyId   String
+  story     Story       @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  phaseId   String?
+  phase     StoryPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  stepId    String?
+  step      StoryStep?  @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  itemId    String?
+  item      StoryItem?  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  kind      String
+  sessionId String      @unique
+  state     String      @default("running")
+  note      String      @default("")
+  createdAt DateTime    @default(now())
+  endedAt   DateTime?
+
+  @@index([storyId, createdAt])
+  @@map("story_job")
 }
