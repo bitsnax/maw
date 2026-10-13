@@ -8,7 +8,7 @@ import { shq } from "./shell"
 //
 // Placeholders: `{name}` (letters, digits, underscore, starting with a
 // letter) anywhere in the command. When the button is pressed MAW asks for
-// each value; a story page fills {branch} and {story} for you. Each value is
+// each value; a task page fills {branch} and {task} for you. Each value is
 // put in as one shell word (single-quoted), so spaces and quotes in a commit
 // message are safe. Quotes typed around a placeholder ("{message}" or
 // '{message}') are dropped, since the value is quoted already.

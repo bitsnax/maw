@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { toneFor, type StoryAlert, type Tone } from "@/lib/alert-tones"
+import { toneFor, type TaskAlert, type Tone } from "@/lib/alert-tones"
 import type { WsSnapshot } from "./actions"
 
 // The Dashboard's sounds (public/sounds/*.wav): one tone when something
@@ -29,7 +29,7 @@ export function play(tone: Tone) {
 
 export function useSounds(snap: WsSnapshot) {
   const [on, setOn] = useState(true)
-  const last = useRef<{ alerts: StoryAlert[]; sessions: Map<string, string> } | null>(null)
+  const last = useRef<{ alerts: TaskAlert[]; sessions: Map<string, string> } | null>(null)
 
   // The saved choice is read after the first render (no server/client mismatch).
   useEffect(() => { const t = setTimeout(() => setOn(readOn()), 0); return () => clearTimeout(t) }, [])

@@ -14,7 +14,7 @@ beside llama.cpp (`llama-cpp`, `192.168.4.201:8081`).
 | web | maw-web | Next.js standalone server on :3000 |
 | postgres | maw-postgres | PostgreSQL 16; `127.0.0.1:5434` on the host only |
 | opencode | maw-opencode | OpenCode 1.19.0 server (`opencode serve` on :4096, maw-net only); the 27B on llama.cpp; tools call back into maw-web |
-| runner | maw-runner | MAW's loop that carries stories forward, one model session at a time (`scripts/runner.ts`, the migrate image) |
+| runner | maw-runner | MAW's loop that carries tasks forward, one model session at a time (`scripts/runner.ts`, the migrate image) |
 
 Networks: `maw-net` (internal), `proxy-nw` (external, shared with the edge).
 Volumes: `maw-pgdata`; `maw-opencode-data` (OpenCode's sessions, plugins,
@@ -149,48 +149,51 @@ it, prompt it, watch it work, abort it.
   OpenCode), is recorded under the machine's Recent actions with Who, and is
   kept with the session (`command_run`, last 500 lines) so it survives a
   reload.
-- **Project page** (setup): command buttons, stories, the sessions list
+- **Project page** (setup): command buttons, tasks, the sessions list
   (each opens on the Dashboard), the project profile, Remove project.
-- **Stories** (Phase 4): work too big for one model session (65,536
-  tokens). You write a story on the project page (title, request, optional
-  branch). MAW's agent breaks it into **phases** (story planning) and each
+- **Tasks** (Phase 4): work too big for one model session (65,536
+  tokens). You write a task on the project page (title, request, optional
+  branch). MAW's agent breaks it into **phases** (task planning) and each
   phase into **steps** (phase planning), then works the steps; each planning
   pass and each step is its own session. Checklists (questions a planning
   pass answers, each checked in its own session; some marked for you to
-  answer) and their findings belong to the story or to a phase. MAW's
-  database is the record (`story`, `story_phase`, `story_step`,
-  `story_item`, `story_finding`); nothing is written into the project for
-  it. Pick a story in the Dashboard's second picker to follow it; its key
-  (`1-tool-count`) and branch fill the buttons' `{story}` and `{branch}`.
+  answer) and their findings belong to the task or to a phase. MAW's
+  database is the record (`task`, `task_phase`, `task_step`,
+  `task_item`, `task_finding`); nothing is written into the project for
+  it. Pick a task in the Dashboard's second picker to follow it; its key
+  (`1-tool-count`) and branch fill the buttons' `{task}` and `{branch}`.
   Download gives it as one markdown file for your records.
-- **Story tools** (`opencode/config/tools/`, MAW side `web/lib/story-tools.ts`):
-  the model in a session MAW runs for a story records its work through
-  MAW's tool API like the file tools: `story_read` (story / phase N / step
+- **Task tools** (`opencode/config/tools/`, MAW side `web/lib/task-tools.ts`):
+  the model in a session MAW runs for a task records its work through
+  MAW's tool API like the file tools: `task_read` (task / phase N / step
   N.M as markdown), `item_add`, `finding_add`, `item_check`,
-  `story_plan_set`, `phase_add`, `phase_plan_set`, `step_add`, `step_note`,
-  `step_finish`. The session's `story_job` row (story, phase, step or item,
+  `task_plan_set`, `phase_add`, `phase_plan_set`, `step_add`, `step_note`,
+  `step_finish`. The session's `task_job` row (task, phase, step or item,
   kind) decides what the tools act on and which ones the session may use;
-  other sessions get a plain refusal. In story sessions the bash tool
+  other sessions get a plain refusal. In task sessions the bash tool
   refuses state-changing git (commit, checkout, branch, push, …) before
   anything runs; read-only git is fine.
 - **Project profile** (project page, kept in MAW): the verify commands MAW
   runs after each step, the protected branches, and the profile text every
-  story session is given.
+  task session is given.
 
-## Stories (admin only)
+## Tasks (admin only)
 
-A **story** is work too big for one model session (llama.cpp's context is
-65,536 tokens). MAW breaks it down and carries it through in short sessions,
-keeping every bit of state in its database: nothing is read from or written
-into the project for this (no `plan/` folders, no handoff files).
+You write a **request** (what to build); MAW turns it into a **task** and
+carries it through in short model sessions, because the work is too big for
+one (llama.cpp's context is 65,536 tokens). The task is planned into
+**phases**, each phase into **steps**, and each step is one session. Every
+bit of state is in MAW's database: nothing is read from or written into the
+project for this (no `plan/` folders, no handoff files). (The tables keep
+their first names, `story_*`, behind Prisma's `@@map`; the code says task.)
 
-    Story ─ Phase ─ Step
+    Request → Task ─ Phase ─ Step
 
-- **You write it** on the project page (Stories → New story): a title, the
+- **You write it** on the project page (Tasks → New task): a title, the
   request (what to build, what is out of scope, when it is done) and the
   **branch**. MAW changes files only on that branch; you create it with your
   own command button. The branch is filled in from the title.
-- **The project profile** (project page) holds what every story session is
+- **The project profile** (project page) holds what every task session is
   given: the profile text, the **verify commands** MAW runs after each step,
   the **deploy command** MAW runs to put the changes in front of you, and
   the **protected branches** MAW never changes files on.
@@ -202,7 +205,7 @@ What MAW does, and where it stops for you:
 
 | Stage | Sessions | Stops for you |
 |---|---|---|
-| Story planning | a checklist of what the plan needs, one session per item, then the story plan and its phases | items only you can answer; **Phases ready**: Approve phases or Plan again (with a direction) |
+| Task planning | a checklist of what the plan needs, one session per item, then the task plan and its phases | items only you can answer; **Phases ready**: Approve phases or Plan again (with a direction) |
 | Phase planning (one phase at a time) | **Plan steps** (with a direction, optional), the phase's checklist, one session per item, then the steps | items only you can answer; **Steps ready**: Approve steps or Plan again |
 | Steps (in order) | one session per step; the model may edit files (no commits, no deploys); then MAW runs the verify commands, deploys when needed, and keeps git status and diff with the step | a step marked **Check**: Works as described / Doesn't work… (it runs again with your note); a **blocked** step: Try again (with a direction) or Mark done |
 | Done | the last step of the last phase | commit, push and merge with your buttons |
@@ -212,23 +215,26 @@ What MAW does, and where it stops for you:
   change, a new route), and after a phase's last step. A failed deploy
   blocks the step with its output.
 - **The branch check** runs before every step: on a protected branch, on
-  another branch than the story's, or with no story branch, MAW waits and
+  another branch than the task's, or with no task branch, MAW waits and
   the Dashboard says why (the branch can be set right there).
-- **In story sessions** the bash tool refuses git that changes state and
+- **In task sessions** the bash tool refuses git that changes state and
   docker commands that change what runs; planning sessions cannot write
   files at all.
 - **Your directions and answers** go into every later session's prompt,
   marked as overriding the plan. A done step can be **reopened** with a
   note.
-- **On the Dashboard** a story shows where it is ("Phase 1 of 2 · Step 1.2
+- **On the Dashboard** the left pane is the session MAW is working in
+  (highlighted code, diffs, copy buttons) and the right sidebar is the task:
+  its title opens your request, Plan opens the plan, each phase and step
+  opens in a modal. The sidebar shows where it is ("Phase 1 of 2 · Step 1.2
   of 3"), what MAW is doing now, or **Needed from you** and what that is;
   every session MAW ran is listed under Sessions and opens in the output
   window. **Pause** stops the running session; Resume goes on from there.
-  **Download** gives the whole story as markdown.
+  **Download** gives the whole task as markdown.
 - **Sounds** (the bell in the toolbar, remembered per browser): `stopped`
-  when a story or your session stops for you, `question` when you are asked
-  something or a step needs your check, `error` when a story is blocked or a
-  session fails, `finished` when a story is done. Browsers play sound only
+  when a task or your session stops for you, `question` when you are asked
+  something or a step needs your check, `error` when a task is blocked or a
+  session fails, `finished` when a task is done. Browsers play sound only
   after one click on the page.
 
 ## maw-opencode (opencode/)

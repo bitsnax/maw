@@ -4,34 +4,34 @@ import { revalidatePath } from "next/cache"
 import { adminSession } from "@/lib/admin-session"
 import { prisma } from "@/lib/prisma"
 import {
-  PHASE_STATUS, STEP_STATUS, STORY_STATUS, createStory, getStory, removeStory, saveProfile, storyKey, updateStory,
-  type NewStoryInput,
-} from "@/lib/stories"
+  PHASE_STATUS, STEP_STATUS, TASK_STATUS, createTask, getTask, removeTask, saveProfile, taskKey, updateTask,
+  type NewTaskInput,
+} from "@/lib/tasks"
 import {
-  JOB_LABEL, approvePhases, approveSteps, checkStep, markStepDone, pauseStory, planPhase, reopenStep, replanPhases, replanSteps, resumeStory, retryStep,
-  runnerSeen, setStoryBranch, stopStoryJobs,
-} from "@/lib/story-runner"
+  JOB_LABEL, approvePhases, approveSteps, checkStep, markStepDone, pauseTask, planPhase, reopenStep, replanPhases, replanSteps, resumeTask, retryStep,
+  runnerSeen, setTaskBranch, stopTaskJobs,
+} from "@/lib/task-runner"
 import { liveStates } from "@/lib/session-status"
 
-// Stories (admin only, like Projects). Every action checks the admin itself;
+// Tasks (admin only, like Projects). Every action checks the admin itself;
 // none throws to the browser.
 
-const BRANCH_NEEDED = "MAW changes files only on the story's own branch; give it one (you create it with your command button)."
+const BRANCH_NEEDED = "MAW changes files only on the task's own branch; give it one (you create it with your command button)."
 
 type Reply<T> = { ok: true; data: T } | { ok: false; message: string; errors?: Record<string, string> }
 
 type Finding = { id: string; heading: string; body: string }
 type Item = { id: string; text: string; checked: boolean; developer: boolean; answer: string | null; findings: Finding[] }
-export type StoryView = {
+export type TaskView = {
   id: string; projectId: string; number: number; key: string; title: string; request: string
   status: string; statusLabel: string; branch: string | null; updatedAt: string
-  /** Where Resume / Retry returns the story: planning or in-progress. */
+  /** Where Resume / Retry returns the task: planning or in-progress. */
   resumeTo: string | null
   /** Why the runner waits before the next step (the branch), or "". */
   runnerNote: string
   overview: string; outOfScope: string; notes: string
   items: Item[]; findings: Finding[]
-  /** The sessions MAW ran for the story, newest first. */
+  /** The sessions MAW ran for the task, newest first. */
   jobs: Job[]
   /** The running session and what it is doing, if any. */
   now: { job: Job; activity: string } | null
@@ -57,12 +57,12 @@ const f = (x: { id: string; heading: string; body: string }): Finding => ({ id: 
 const item = (q: { id: string; text: string; checked: boolean; developer: boolean; answer: string | null; findings: Finding[] }): Item =>
   ({ id: q.id, text: q.text, checked: q.checked, developer: q.developer, answer: q.answer, findings: q.findings.map(f) })
 
-export async function storyView(id: string): Promise<Reply<StoryView>> {
-  if (!(await adminSession())) return { ok: false, message: "Stories are for admins." }
-  const s = await getStory(id)
-  if (!s) return { ok: false, message: "This story no longer exists." }
-  const rows = await prisma.storyJob.findMany({
-    where: { storyId: s.id }, orderBy: { createdAt: "desc" }, take: 200,
+export async function taskView(id: string): Promise<Reply<TaskView>> {
+  if (!(await adminSession())) return { ok: false, message: "Tasks are for admins." }
+  const s = await getTask(id)
+  if (!s) return { ok: false, message: "This task no longer exists." }
+  const rows = await prisma.taskJob.findMany({
+    where: { taskId: s.id }, orderBy: { createdAt: "desc" }, take: 200,
     include: { item: { select: { position: true } }, phase: { select: { number: true } }, step: { select: { number: true } } },
   })
   const sessions = new Set((await prisma.projectSession.findMany({ where: { id: { in: rows.map((j) => j.sessionId) } }, select: { id: true } })).map((x) => x.id))
@@ -72,7 +72,7 @@ export async function storyView(id: string): Promise<Reply<StoryView>> {
     createdAt: j.createdAt.toISOString(), endedAt: j.endedAt?.toISOString() ?? null,
   }))
   const running = jobs.find((j) => j.state === "running") ?? null
-  let now: StoryView["now"] = null
+  let now: TaskView["now"] = null
   if (running) {
     const live = (await liveStates([s.projectId])).states.get(running.sessionId)
     now = { job: running, activity: live?.activity ?? "Starting" }
@@ -81,8 +81,8 @@ export async function storyView(id: string): Promise<Reply<StoryView>> {
   return {
     ok: true,
     data: {
-      id: s.id, projectId: s.projectId, number: s.number, key: storyKey(s), title: s.title, request: s.request,
-      status: s.status, statusLabel: STORY_STATUS[s.status] ?? s.status, branch: s.branch, resumeTo: s.resumeTo, runnerNote: s.runnerNote, updatedAt: s.updatedAt.toISOString(),
+      id: s.id, projectId: s.projectId, number: s.number, key: taskKey(s), title: s.title, request: s.request,
+      status: s.status, statusLabel: TASK_STATUS[s.status] ?? s.status, branch: s.branch, resumeTo: s.resumeTo, runnerNote: s.runnerNote, updatedAt: s.updatedAt.toISOString(),
       overview: s.overview, outOfScope: s.outOfScope, notes: s.notes,
       items: s.items.map(item), findings: s.findings.map(f),
       jobs, now, runnerAge: seen ? Math.max(0, Math.round((Date.now() - seen.getTime()) / 1000)) : null,
@@ -100,50 +100,50 @@ export async function storyView(id: string): Promise<Reply<StoryView>> {
   }
 }
 
-export async function newStory(projectId: string, input: NewStoryInput): Promise<Reply<{ id: string }>> {
+export async function newTask(projectId: string, input: NewTaskInput): Promise<Reply<{ id: string }>> {
   const a = await adminSession()
-  if (!a) return { ok: false, message: "Only an admin can write stories." }
+  if (!a) return { ok: false, message: "Only an admin can write tasks." }
   if (!(await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } }))) return { ok: false, message: "This project no longer exists." }
   if (!input.branch?.trim()) return { ok: false, message: "Check the fields below.", errors: { branch: BRANCH_NEEDED } }
-  const r = await createStory(projectId, a.user.id, input)
+  const r = await createTask(projectId, a.user.id, input)
   if (!r.ok) return { ok: false, message: "Check the fields below.", errors: r.errors }
   revalidatePath(`/projects/${projectId}`)
-  return { ok: true, data: { id: r.story.id } }
+  return { ok: true, data: { id: r.task.id } }
 }
 
-export async function editStory(id: string, input: NewStoryInput): Promise<Reply<null>> {
-  if (!(await adminSession())) return { ok: false, message: "Only an admin can change stories." }
-  const s = await prisma.story.findUnique({ where: { id }, select: { projectId: true } })
+export async function editTask(id: string, input: NewTaskInput): Promise<Reply<null>> {
+  if (!(await adminSession())) return { ok: false, message: "Only an admin can change tasks." }
+  const s = await prisma.task.findUnique({ where: { id }, select: { projectId: true } })
   if (!input.branch?.trim()) return { ok: false, message: "Check the fields below.", errors: { branch: BRANCH_NEEDED } }
-  const r = await updateStory(id, input)
+  const r = await updateTask(id, input)
   if (!r.ok) return { ok: false, message: r.message ?? "Check the fields below.", errors: r.errors }
   if (s) revalidatePath(`/projects/${s.projectId}`)
   return { ok: true, data: null }
 }
 
-export async function deleteStory(id: string): Promise<Reply<null>> {
-  if (!(await adminSession())) return { ok: false, message: "Only an admin can remove stories." }
-  const s = await prisma.story.findUnique({ where: { id }, select: { projectId: true } })
-  await stopStoryJobs(id, "The story was removed.")
-  await removeStory(id)
+export async function deleteTask(id: string): Promise<Reply<null>> {
+  if (!(await adminSession())) return { ok: false, message: "Only an admin can remove tasks." }
+  const s = await prisma.task.findUnique({ where: { id }, select: { projectId: true } })
+  await stopTaskJobs(id, "The task was removed.")
+  await removeTask(id)
   if (s) revalidatePath(`/projects/${s.projectId}`)
   return { ok: true, data: null }
 }
 
 /** Your answer to a checklist item marked for you; answering checks it. */
-export async function answerStoryItem(itemId: string, answer: string): Promise<Reply<null>> {
+export async function answerTaskItem(itemId: string, answer: string): Promise<Reply<null>> {
   if (!(await adminSession())) return { ok: false, message: "Only an admin can answer." }
   const a = answer.trim()
   if (!a) return { ok: false, message: "Write the answer first." }
-  const q = await prisma.storyItem.update({ where: { id: itemId }, data: { answer: a, checked: true, checkedAt: new Date() } }).catch(() => null)
+  const q = await prisma.taskItem.update({ where: { id: itemId }, data: { answer: a, checked: true, checkedAt: new Date() } }).catch(() => null)
   return q ? { ok: true, data: null } : { ok: false, message: "This item no longer exists." }
 }
 
-/** The story's planning, from the Dashboard: pause, resume or retry, approve
+/** The task's planning, from the Dashboard: pause, resume or retry, approve
  *  the phases, or plan them again (with your direction, optional). */
-export async function storyControl(id: string, act: "pause" | "resume" | "approve-phases" | "replan-phases", direction = ""): Promise<Reply<null>> {
+export async function taskControl(id: string, act: "pause" | "resume" | "approve-phases" | "replan-phases", direction = ""): Promise<Reply<null>> {
   if (!(await adminSession())) return { ok: false, message: "Only an admin can do that." }
-  const r = act === "pause" ? await pauseStory(id) : act === "resume" ? await resumeStory(id)
+  const r = act === "pause" ? await pauseTask(id) : act === "resume" ? await resumeTask(id)
     : act === "approve-phases" ? await approvePhases(id) : act === "replan-phases" ? await replanPhases(id, direction)
     : { ok: false as const, message: "Unknown action." }
   return r.ok ? { ok: true, data: null } : r
@@ -168,10 +168,10 @@ export async function stepControl(stepId: string, act: "checked" | "not-right" |
   return r.ok ? { ok: true, data: null } : r
 }
 
-/** The story's branch, from the Dashboard's bar. */
-export async function saveStoryBranch(storyId: string, branch: string): Promise<Reply<null>> {
-  if (!(await adminSession())) return { ok: false, message: "Only an admin can change stories." }
-  const r = await setStoryBranch(storyId, branch)
+/** The task's branch, from the Dashboard's bar. */
+export async function saveTaskBranch(taskId: string, branch: string): Promise<Reply<null>> {
+  if (!(await adminSession())) return { ok: false, message: "Only an admin can change tasks." }
+  const r = await setTaskBranch(taskId, branch)
   return r.ok ? { ok: true, data: null } : r
 }
 

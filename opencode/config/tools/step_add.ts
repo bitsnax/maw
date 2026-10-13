@@ -1,6 +1,6 @@
 import { tool } from "@opencode-ai/plugin"
 import { call } from "../maw-lib/maw.ts"
-// MAW story tool: adds the next step of this phase.
+// MAW task tool: adds the next step of this phase.
 export default tool({
   description: "Add the next step of this phase. One step is one coherent change (at most 3 files, roughly 150 changed lines) that a fresh session can carry out having read nothing but the step: inline the exact signatures and rules it needs (context), anchor every change with a grep pattern, never a line number (changes), list the only reads allowed (readBudget), and the checks (verification). Order steps so types and schema come before their users. Set needsCheck when the developer must look at the running app before later steps build on it, and say in manualCheck exactly what to open and what to see (MAW deploys the project before asking, so do not tell the developer to rebuild). Set needsDeploy when later steps need this step's result running (a schema change, a new route or service); MAW also deploys before every check and when the phase ends.",
   args: {

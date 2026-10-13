@@ -69,16 +69,16 @@ export async function projectChanges(projectId: string, tick?: () => void): Prom
 }
 
 /** Why a step must not start on the project's current branch, or null. */
-export async function branchProblem(projectId: string, storyBranch: string | null): Promise<string | null> {
+export async function branchProblem(projectId: string, taskBranch: string | null): Promise<string | null> {
   const p = await projectOf(projectId)
   const r = await runOnMachine(p.machine, p.root, "git rev-parse --abbrev-ref HEAD", 30)
   if (!r.ok) return null // not a git project: nothing to check
   const cur = r.text.trim().split("\n").at(-1)?.trim() ?? ""
   if (p.protectedBranches.includes(cur)) {
-    return `The project is on ${cur}, a protected branch, so MAW does not change files there.${storyBranch ? ` Create or switch to ${storyBranch} with your command button;` : " Switch to a story branch with your command button;"} the next step starts within a minute after that.`
+    return `The project is on ${cur}, a protected branch, so MAW does not change files there.${taskBranch ? ` Create or switch to ${taskBranch} with your command button;` : " Switch to a task branch with your command button;"} the next step starts within a minute after that.`
   }
-  if (storyBranch && cur !== storyBranch) {
-    return `The project is on ${cur}, but this story's branch is ${storyBranch}. Switch to ${storyBranch} with your command button (or change the story's branch); the next step starts within a minute after that.`
+  if (taskBranch && cur !== taskBranch) {
+    return `The project is on ${cur}, but this task's branch is ${taskBranch}. Switch to ${taskBranch} with your command button (or change the task's branch); the next step starts within a minute after that.`
   }
   return null
 }

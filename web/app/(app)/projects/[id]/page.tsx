@@ -6,8 +6,8 @@ import { liveStates } from "@/lib/session-status"
 import ProjectSettings from "./ProjectSettings"
 import ProjectCommands from "../ProjectCommands"
 import { listCommands } from "@/lib/project-commands"
-import { STORY_STATUS, listStories, progress } from "@/lib/stories"
-import ProjectStories from "./ProjectStories"
+import { TASK_STATUS, listTasks, progress } from "@/lib/tasks"
+import ProjectTasks from "./ProjectTasks"
 import ProjectProfile from "./ProjectProfile"
 
 export const dynamic = "force-dynamic"
@@ -32,8 +32,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     },
   })
   if (!project) notFound()
-  const [info, live, commands, stories] = await Promise.all([
-    getMachineInfo(project.machine), liveStates([project.id]), listCommands(project.id), listStories(project.id),
+  // Sessions MAW ran for a task are listed with their task (Dashboard sidebar), not here.
+  const jobIds = new Set((await prisma.taskJob.findMany({ where: { sessionId: { in: project.sessions.map((x) => x.id) } }, select: { sessionId: true } })).map((j) => j.sessionId))
+  project.sessions = project.sessions.filter((x) => !jobIds.has(x.id))
+  const [info, live, commands, tasks] = await Promise.all([
+    getMachineInfo(project.machine), liveStates([project.id]), listCommands(project.id), listTasks(project.id),
   ])
 
   return (
@@ -62,13 +65,13 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       <ProjectCommands projectId={project.id} root={project.root} machineName={project.machine.name}
         commands={commands.map((c) => ({ id: c.id, title: c.title, command: c.command }))} />
 
-      <h2 className="section-title">Stories</h2>
-      <ProjectStories projectId={project.id}
-        stories={stories.map((t) => {
+      <h2 className="section-title">Tasks</h2>
+      <ProjectTasks projectId={project.id}
+        tasks={tasks.map((t) => {
           const pr = progress(t)
           return {
             id: t.id, number: t.number, title: t.title, request: t.request, branch: t.branch,
-            status: t.status, statusLabel: STORY_STATUS[t.status] ?? t.status,
+            status: t.status, statusLabel: TASK_STATUS[t.status] ?? t.status,
             phases: pr.phases, steps: pr.steps ? `${pr.done} of ${pr.steps}` : "—", updated: when(t.updatedAt),
           }
         })} />

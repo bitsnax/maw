@@ -3,7 +3,8 @@ ARG NODE_VERSION=22-alpine
 FROM node:${NODE_VERSION} AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+# Retries and longer timeouts: a flaky link to the registry should not fail a build.
+RUN npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 --fetch-timeout=600000
 
 # One-shot migrator: `prisma migrate deploy` against DATABASE_URL, then exit.
 # Run by the `migrate` service in docker-compose.yml before `web` starts.

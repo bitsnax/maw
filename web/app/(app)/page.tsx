@@ -9,7 +9,7 @@ import { workspaceSnapshot } from "./workspace/actions"
 
 export const dynamic = "force-dynamic"
 
-export default async function Dashboard({ searchParams }: { searchParams: Promise<{ project?: string; session?: string; story?: string }> }) {
+export default async function Dashboard({ searchParams }: { searchParams: Promise<{ project?: string; session?: string; task?: string }> }) {
   const admin = await adminSession()
   if (!admin) {
     return (
@@ -20,10 +20,10 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     )
   }
   const q = await searchParams
-  // A session or story in the address picks its project.
+  // A session or task in the address picks its project.
   const owner = q.session ? await prisma.projectSession.findUnique({ where: { id: q.session }, select: { projectId: true } }) : null
-  const storyOwner = !owner && q.story ? await prisma.story.findUnique({ where: { id: q.story }, select: { projectId: true } }) : null
-  const snap = await workspaceSnapshot(owner?.projectId ?? storyOwner?.projectId ?? q.project ?? null)
+  const taskOwner = !owner && q.task ? await prisma.task.findUnique({ where: { id: q.task }, select: { projectId: true } }) : null
+  const snap = await workspaceSnapshot(owner?.projectId ?? taskOwner?.projectId ?? q.project ?? null)
   if (!snap.ok) return <p className="app-empty">{snap.message}</p>
-  return <Workspace initial={snap.data} initialSession={owner ? q.session! : null} initialStory={storyOwner ? q.story! : null} />
+  return <Workspace initial={snap.data} initialSession={owner ? q.session! : null} initialTask={taskOwner ? q.task! : null} />
 }

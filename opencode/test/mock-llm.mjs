@@ -5,10 +5,10 @@
 //   prompt containing "ask": calls OpenCode's question tool (two options)
 //   prompt containing "git status": runs `git status --short --branch`
 //   prompt with lines "CALL <tool> <json args>": calls those tools in order,
-//     then answers "calls done" (story tools and refused git in the tests)
+//     then answers "calls done" (task tools and refused git in the tests)
 //   lines "WHEN <text> CALL <tool> <json args>" count only when <text> is in
-//     the prompt outside such lines (the runner's sessions: one story request,
-//     different calls for "story-checklist", "story-item, item 2", …)
+//     the prompt outside such lines (the runner's sessions: one task request,
+//     different calls for "task-checklist", "task-item, item 2", …)
 //   any other prompt: write → read → edit → glob → grep → bash, then answers
 // Requests without tools (title generation) get a short title.
 import http from "node:http"

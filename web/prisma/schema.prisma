@@ -34,7 +34,7 @@ model User {
   projectSessions ProjectSession[]
   projectCommands ProjectCommand[] @relation("ProjectCommandCreatedBy")
   commandRuns     CommandRun[]
-  storiesCreated  Story[]          @relation("StoryCreatedBy")
+  tasksCreated  Task[]          @relation("TaskCreatedBy")
 
   @@map("user")
 }
@@ -171,8 +171,8 @@ model Project {
   sessions    ProjectSession[]
   commands    ProjectCommand[]
   commandRuns CommandRun[]
-  stories     Story[]
-  // Project profile, kept in MAW: facts every story session is given,
+  tasks     Task[]
+  // Project profile, kept in MAW: facts every task session is given,
   // verifyCommands run in order after each step, protectedBranches are never
   // worked on.
   profile           String   @default("")
@@ -227,7 +227,7 @@ model ProjectCommand {
 
 // One press of a project command button, shown in the Dashboard's output
 // window among the session's messages (never sent to OpenCode). `sessionId`
-// is the OpenCode session that was open, `storyId` the story (null: none);
+// is the OpenCode session that was open, `taskId` the task (null: none);
 // `lines` is the output
 // once the command has ended (the last 500 lines, [{s:"o"|"e", t}]).
 model CommandRun {
@@ -235,7 +235,7 @@ model CommandRun {
   projectId  String
   project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   sessionId  String?
-  storyId    String?
+  taskId    String? @map("storyId")
   userId     String?
   user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   title      String
@@ -253,15 +253,15 @@ model CommandRun {
   @@map("command_run")
 }
 
-// A story: work too big for one model session (65,536 tokens), carried
-// through in small ones. MAW's agent breaks the story into phases and each
+// A task: work too big for one model session (65,536 tokens), carried
+// through in small ones. MAW's agent breaks the task into phases and each
 // phase into steps; every planning pass and every step is its own session.
 // The database is the record; nothing is written into the project for it.
-//   Story ─ Phase ─ Step
+//   Task ─ Phase ─ Step
 // Checklist items (questions the planning sessions answer, each checked in
-// its own pass) and their findings belong to the story (phaseId null) or to
+// its own pass) and their findings belong to the task (phaseId null) or to
 // one phase.
-model Story {
+model Task {
   id          String         @id @default(cuid())
   projectId   String
   project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -270,35 +270,35 @@ model Story {
   request     String
   // planning, phases-ready, in-progress, paused, blocked, done
   status      String         @default("planning")
-  // where Resume / Retry returns a paused or blocked story (planning or in-progress)
+  // where Resume / Retry returns a paused or blocked task (planning or in-progress)
   resumeTo    String?
   // why the runner is waiting before the next step (wrong or protected branch), or ""
   runnerNote  String         @default("")
   branch      String?
-  // the story plan: what the phases add up to
+  // the task plan: what the phases add up to
   overview    String         @default("")
   outOfScope  String         @default("")
   notes       String         @default("")
   createdById String?
-  createdBy   User?          @relation("StoryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy   User?          @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
-  phases      StoryPhase[]
-  items       StoryItem[]
-  findings    StoryFinding[]
-  jobs        StoryJob[]
+  phases      TaskPhase[]
+  items       TaskItem[]
+  findings    TaskFinding[]
+  jobs        TaskJob[]
 
   @@unique([projectId, number])
   @@map("story")
 }
 
-// One phase of a story: a coherent part that is planned into steps on its
+// One phase of a task: a coherent part that is planned into steps on its
 // own (its own checklist and findings), then worked step by step.
 // status: pending, planning, steps-ready, in-progress, blocked, done
-model StoryPhase {
+model TaskPhase {
   id        String         @id @default(cuid())
-  storyId   String
-  story     Story          @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  taskId   String @map("storyId")
+  task     Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
   number    Int
   title     String
   goal      String         @default("")
@@ -307,21 +307,21 @@ model StoryPhase {
   status    String         @default("pending")
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
-  steps     StoryStep[]
-  items     StoryItem[]
-  findings  StoryFinding[]
-  jobs      StoryJob[]
+  steps     TaskStep[]
+  items     TaskItem[]
+  findings  TaskFinding[]
+  jobs      TaskJob[]
 
-  @@unique([storyId, number])
+  @@unique([taskId, number])
   @@map("story_phase")
 }
 
 // One step of a phase: everything a fresh session needs to carry it out.
 // status: pending, in-progress, done, blocked
-model StoryStep {
+model TaskStep {
   id           String     @id @default(cuid())
   phaseId      String
-  phase        StoryPhase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  phase        TaskPhase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
   number       Int
   title        String
   files        String     @default("")
@@ -342,7 +342,7 @@ model StoryStep {
   deployOutput String     @default("")
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
-  jobs         StoryJob[]
+  jobs         TaskJob[]
 
   @@unique([phaseId, number])
   @@map("story_step")
@@ -350,12 +350,12 @@ model StoryStep {
 
 // A checklist item of a planning pass: a question the plan needs answered,
 // checked in its own session. `developer` marks one only you can answer.
-model StoryItem {
+model TaskItem {
   id        String         @id @default(cuid())
-  storyId   String
-  story     Story          @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  taskId   String @map("storyId")
+  task     Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
   phaseId   String?
-  phase     StoryPhase?    @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  phase     TaskPhase?    @relation(fields: [phaseId], references: [id], onDelete: Cascade)
   position  Int
   text      String
   checked   Boolean        @default(false)
@@ -363,52 +363,52 @@ model StoryItem {
   answer    String?
   checkedAt DateTime?
   createdAt DateTime       @default(now())
-  findings  StoryFinding[]
-  jobs      StoryJob[]
+  findings  TaskFinding[]
+  jobs      TaskJob[]
 
-  @@index([storyId, phaseId, position])
+  @@index([taskId, phaseId, position])
   @@map("story_item")
 }
 
 // What a planning session found, recorded as it went: exact shapes copied
 // from source, which later sessions rely on instead of reading again.
-model StoryFinding {
+model TaskFinding {
   id        String      @id @default(cuid())
-  storyId   String
-  story     Story       @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  taskId   String @map("storyId")
+  task     Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
   phaseId   String?
-  phase     StoryPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  phase     TaskPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
   itemId    String?
-  item      StoryItem?  @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  item      TaskItem?  @relation(fields: [itemId], references: [id], onDelete: SetNull)
   position  Int
   heading   String      @default("")
   body      String
   createdAt DateTime    @default(now())
 
-  @@index([storyId, phaseId, position])
+  @@index([taskId, phaseId, position])
   @@map("story_finding")
 }
 
-// One model session MAW runs for a story: what it works on and how it went.
-// The story tools find their target through the session id.
-// kind: story-checklist  write the story's checklist
-//       story-item       answer one story checklist item
-//       story-phases     write the story plan and its phases
+// One model session MAW runs for a task: what it works on and how it went.
+// The task tools find their target through the session id.
+// kind: task-checklist  write the task's checklist
+//       task-item       answer one task checklist item
+//       task-phases     write the task plan and its phases
 //       phase-checklist  write one phase's checklist
 //       phase-item       answer one phase checklist item
 //       phase-steps      write one phase's plan and steps
 //       step             carry out one step
 // state: running, done, failed, stopped
-model StoryJob {
+model TaskJob {
   id        String      @id @default(cuid())
-  storyId   String
-  story     Story       @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  taskId   String @map("storyId")
+  task     Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
   phaseId   String?
-  phase     StoryPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  phase     TaskPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
   stepId    String?
-  step      StoryStep?  @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  step      TaskStep?  @relation(fields: [stepId], references: [id], onDelete: Cascade)
   itemId    String?
-  item      StoryItem?  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  item      TaskItem?  @relation(fields: [itemId], references: [id], onDelete: Cascade)
   kind      String
   sessionId String      @unique
   state     String      @default("running")
@@ -416,6 +416,6 @@ model StoryJob {
   createdAt DateTime    @default(now())
   endedAt   DateTime?
 
-  @@index([storyId, createdAt])
+  @@index([taskId, createdAt])
   @@map("story_job")
 }

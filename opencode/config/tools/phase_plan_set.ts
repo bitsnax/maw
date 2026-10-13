@@ -1,6 +1,6 @@
 import { tool } from "@opencode-ai/plugin"
 import { call } from "../maw-lib/maw.ts"
-// MAW story tool: this phase's plan sections.
+// MAW task tool: this phase's plan sections.
 export default tool({
   description: "Update this phase's plan: goal, approach (files to touch and the shape of the change), notes for the developer. Give any of them; each replaces what was there.",
   args: {

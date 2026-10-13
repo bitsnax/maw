@@ -1,15 +1,15 @@
 import { prisma } from "./prisma"
 
-// Stories: the database record of work too big for one model session.
-//   Story ─ Phase ─ Step
-// You write a story (title + request) on the project page; MAW's agent
-// breaks it into phases (story planning) and each phase into steps (phase
+// Tasks: the database record of work too big for one model session.
+//   Task ─ Phase ─ Step
+// You write a task (title + request) on the project page; MAW's agent
+// breaks it into phases (task planning) and each phase into steps (phase
 // planning), then works the steps; every planning pass and every step is its
 // own session that fits in 65,536 tokens. Nothing is written into the
 // project for any of this. Not a "use server" file, so self-tests can call
 // it; the actions that call it check for an admin first.
 
-export const STORY_STATUS: Record<string, string> = {
+export const TASK_STATUS: Record<string, string> = {
   planning: "Planning phases", "phases-ready": "Phases ready for you", "in-progress": "In progress",
   paused: "Paused", blocked: "Blocked", done: "Done",
 }
@@ -21,25 +21,25 @@ export const STEP_STATUS: Record<string, string> = {
   pending: "Pending", "in-progress": "In progress", verifying: "Verifying", deploying: "Deploying", "waiting-check": "Waiting for your check", done: "Done", blocked: "Blocked",
 }
 
-export type NewStoryInput = { title: string; request: string; branch?: string }
+export type NewTaskInput = { title: string; request: string; branch?: string }
 
-/** The branch a new story is given unless you change it: "story-3-tool-count". */
+/** The branch a new task is given unless you change it: "task-3-tool-count". */
 export function defaultBranch(s: { number: number; title: string }): string {
-  return `story-${storyKey(s)}`
+  return `task-${taskKey(s)}`
 }
 
-/** kebab-case of a title, for {story} and branch names: "3-tool-count". */
-export function storyKey(s: { number: number; title: string }): string {
+/** kebab-case of a title, for {task} and branch names: "3-tool-count". */
+export function taskKey(s: { number: number; title: string }): string {
   const k = s.title.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "")
   return k ? `${s.number}-${k}` : String(s.number)
 }
 
 const BRANCH = /^(?!\/|.*\/\/|.*\.\.|.*@\{|.*[\s~^:?*[\\]).{1,100}(?<![/.]|\.lock)$/
 
-export function checkStoryInput(i: NewStoryInput): Record<string, string> {
+export function checkTaskInput(i: NewTaskInput): Record<string, string> {
   const e: Record<string, string> = {}
   const t = i.title.trim()
-  if (!t) e.title = "Give the story a short title, for example Tool count per connection."
+  if (!t) e.title = "Give the task a short title, for example Tool count per connection."
   else if (t.length > 120) e.title = "At most 120 characters."
   if (!i.request.trim()) e.request = "Describe the work: what to build or change, what is out of scope, and when it is done."
   const b = (i.branch ?? "").trim()
@@ -47,34 +47,34 @@ export function checkStoryInput(i: NewStoryInput): Record<string, string> {
   return e
 }
 
-export async function createStory(projectId: string, userId: string | null, i: NewStoryInput) {
-  const errors = checkStoryInput(i)
+export async function createTask(projectId: string, userId: string | null, i: NewTaskInput) {
+  const errors = checkTaskInput(i)
   if (Object.keys(errors).length) return { ok: false as const, errors }
-  const story = await prisma.$transaction(async (tx) => {
-    const last = await tx.story.findFirst({ where: { projectId }, orderBy: { number: "desc" }, select: { number: true } })
-    return tx.story.create({
+  const task = await prisma.$transaction(async (tx) => {
+    const last = await tx.task.findFirst({ where: { projectId }, orderBy: { number: "desc" }, select: { number: true } })
+    return tx.task.create({
       data: { projectId, number: (last?.number ?? 0) + 1, title: i.title.trim(), request: i.request.trim(), branch: i.branch?.trim() || null, createdById: userId },
     })
   })
-  return { ok: true as const, story }
+  return { ok: true as const, task }
 }
 
-export async function updateStory(id: string, i: NewStoryInput) {
-  const errors = checkStoryInput(i)
+export async function updateTask(id: string, i: NewTaskInput) {
+  const errors = checkTaskInput(i)
   if (Object.keys(errors).length) return { ok: false as const, errors }
-  const r = await prisma.story.updateMany({ where: { id }, data: { title: i.title.trim(), request: i.request.trim(), branch: i.branch?.trim() || null } })
-  return r.count ? { ok: true as const } : { ok: false as const, errors: {}, message: "This story no longer exists." }
+  const r = await prisma.task.updateMany({ where: { id }, data: { title: i.title.trim(), request: i.request.trim(), branch: i.branch?.trim() || null } })
+  return r.count ? { ok: true as const } : { ok: false as const, errors: {}, message: "This task no longer exists." }
 }
 
-export function listStories(projectId: string) {
-  return prisma.story.findMany({
+export function listTasks(projectId: string) {
+  return prisma.task.findMany({
     where: { projectId }, orderBy: { number: "desc" },
     include: { phases: { select: { status: true, steps: { select: { status: true } } } } },
   })
 }
 
-export function getStory(id: string) {
-  return prisma.story.findUnique({
+export function getTask(id: string) {
+  return prisma.task.findUnique({
     where: { id },
     include: {
       project: { include: { machine: { select: { name: true } } } },
@@ -91,14 +91,14 @@ export function getStory(id: string) {
     },
   })
 }
-export type FullStory = NonNullable<Awaited<ReturnType<typeof getStory>>>
+export type FullTask = NonNullable<Awaited<ReturnType<typeof getTask>>>
 
-export async function removeStory(id: string) {
-  await prisma.commandRun.deleteMany({ where: { storyId: id } })
-  return (await prisma.story.deleteMany({ where: { id } })).count > 0
+export async function removeTask(id: string) {
+  await prisma.commandRun.deleteMany({ where: { taskId: id } })
+  return (await prisma.task.deleteMany({ where: { id } })).count > 0
 }
 
-/** Steps done / all steps across the story's phases. */
+/** Steps done / all steps across the task's phases. */
 export function progress(s: { phases: { steps: { status: string }[] }[] }) {
   const steps = s.phases.flatMap((p) => p.steps)
   return { phases: s.phases.length, steps: steps.length, done: steps.filter((x) => x.status === "done").length }
@@ -120,7 +120,7 @@ export async function saveProfile(projectId: string, i: { profile: string; verif
 
 const sec = (h: string, body: string) => (body.trim() ? `${h}\n${body.trim()}\n` : "")
 
-function checklist(items: FullStory["items"]): string {
+function checklist(items: FullTask["items"]): string {
   return items.map((q) => {
     const lines = [`- [${q.checked ? "x" : " "}] ${q.developer ? "(for you) " : ""}${q.text}${q.answer ? `\n  Answer: ${q.answer}` : ""}`]
     for (const f of q.findings) lines.push(`  #### ${f.heading || "Finding"}\n${f.body.replace(/^/gm, "  ")}`)
@@ -128,18 +128,18 @@ function checklist(items: FullStory["items"]): string {
   }).join("\n")
 }
 
-export function storyMarkdown(s: FullStory): string {
+export function taskMarkdown(s: FullTask): string {
   const out: string[] = [
-    `# Story ${s.number}: ${s.title}`,
-    `Project ${s.project.name} — ${s.project.root} on ${s.project.machine.name} · ${STORY_STATUS[s.status] ?? s.status}${s.branch ? ` · branch ${s.branch}` : ""}`,
+    `# ${s.title}`,
+    `Project ${s.project.name} — ${s.project.root} on ${s.project.machine.name} · ${TASK_STATUS[s.status] ?? s.status}${s.branch ? ` · branch ${s.branch}` : ""}`,
     `Downloaded ${new Date().toISOString()}`, "",
     sec("## Request", s.request), sec("## Overview", s.overview), sec("## Out of scope", s.outOfScope), sec("## Notes", s.notes),
   ]
-  if (s.items.length) out.push("## Story checklist", checklist(s.items), "")
+  if (s.items.length) out.push("## Task checklist", checklist(s.items), "")
   for (const f of s.findings) out.push(`### ${f.heading || "Finding"}`, f.body, "")
   for (const p of s.phases) {
     out.push(`## Phase ${p.number}: ${p.title} (${PHASE_STATUS[p.status] ?? p.status})`, sec("### Goal", p.goal), sec("### Approach", p.approach), sec("### Notes", p.notes))
-    if (p.items.length) out.push("### Phase checklist", checklist(p.items as FullStory["items"]), "")
+    if (p.items.length) out.push("### Phase checklist", checklist(p.items as FullTask["items"]), "")
     for (const f of p.findings) out.push(`#### ${f.heading || "Finding"}`, f.body, "")
     for (const x of p.steps) {
       out.push(`### Step ${p.number}.${x.number}: ${x.title} (${STEP_STATUS[x.status] ?? x.status})`, x.files ? `Files: ${x.files}` : "",

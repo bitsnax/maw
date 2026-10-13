@@ -10,23 +10,23 @@ import {
 } from "./actions"
 import { Message, QuestionCard, turnFooter } from "./conversation"
 import { useSession } from "./useSession"
-import StoryView from "./StoryView"
+import TaskPanel, { ContextMeter, type ContextUse } from "./TaskPanel"
 import { useSounds } from "./sounds"
 import type { RunLine, RunView } from "@/lib/command-runs"
 import type { CommandStatus, OutputLine } from "@/lib/machines"
 
 // The Dashboard workspace, where the work happens:
-//   toolbar   project picker, session picker (or a new session), the
+//   toolbar   project picker, session or task picker (or a new session), the
 //             project's command buttons, Working · N s and Abort
-//   output    the session's conversation as it happens, with button runs
-//             (never sent to OpenCode) in time order among the messages
+//   left      the conversation as it happens (the open session, or for a task
+//             the session MAW is working in), with button runs (never sent
+//             to OpenCode) in time order among the messages
+//   right     the sidebar: the task (status, what it needs from you, plan,
+//             phases and steps, sessions, context) or the session's details
 //   prompt    sticky at the bottom; with no session open, the first prompt
 //             starts one (titled from the prompt)
-// The second picker also holds the project's stories (written on the project
-// page): picking one shows the story — phases, steps, checklists — in the
-// output window, and its branch and key fill the buttons' {branch} and
-// {story}.
-// The selection is kept in the address (?project=…&session=… or &story=…).
+// A task's branch and key fill the command buttons' {branch} and {task}.
+// The selection is kept in the address (?project=…&session=… or &task=…).
 // The toolbar's live states are asked again every 5 s.
 
 const EVERY = 5000
@@ -37,16 +37,16 @@ function stateLabel(l: { state: string } | null): string {
   return !l ? "" : l.state === "waiting" ? "Waiting for you" : l.state === "retry" ? "Retrying" : "Working"
 }
 
-export default function Workspace({ initial, initialSession, initialStory }: { initial: WsSnapshot; initialSession: string | null; initialStory: string | null }) {
+export default function Workspace({ initial, initialSession, initialTask }: { initial: WsSnapshot; initialSession: string | null; initialTask: string | null }) {
   const [snap, setSnap] = useState(initial)
   const [projectId, setProjectId] = useState(initial.project?.id ?? null)
   const [sessionId, setSessionId] = useState<string | null>(
     initialSession && initial.sessions.some((s) => s.id === initialSession) ? initialSession : null)
-  const [storyId, setStoryId] = useState<string | null>(
-    initialStory && initial.stories.some((s) => s.id === initialStory) ? initialStory : null)
+  const [taskId, setTaskId] = useState<string | null>(
+    initialTask && initial.tasks.some((s) => s.id === initialTask) ? initialTask : null)
 
   // Button runs, kept for one project + session; another selection starts empty.
-  const runKey = `${projectId ?? ""}/${sessionId ?? ""}/${storyId ?? ""}`
+  const runKey = `${projectId ?? ""}/${sessionId ?? ""}/${taskId ?? ""}`
   const [runState, setRunState] = useState<{ key: string; runs: RunView[] }>({ key: "", runs: [] })
   const runs = useMemo(() => (runState.key === runKey ? runState.runs : []), [runState, runKey])
   const setRuns = useCallback((f: (xs: RunView[]) => RunView[]) =>
@@ -57,23 +57,28 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
   const [note, setNote] = useState<string | null>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [now, setNow] = useState(() => Date.now())
-  const sess = useSession(sessionId)
+  // For a task, the left pane follows the session MAW is working in (or the
+  // latest), unless you pick one of its sessions in the sidebar.
+  const [pinned, setPinned] = useState<string | null>(null)
+  const [auto, setAuto] = useState<string | null>(null)
+  const shownId = taskId ? (pinned ?? auto) : sessionId
+  const sess = useSession(shownId)
   const sound = useSounds(snap)
   const outRef = useRef<HTMLDivElement | null>(null)
   const stick = useRef(true)
   const askRef = useRef<HTMLDialogElement | null>(null)
   const project = snap.project
-  const current = snap.sessions.find((s) => s.id === sessionId) ?? null
-  const story = snap.stories.find((s) => s.id === storyId) ?? null
+  const current = snap.sessions.find((s) => s.id === shownId) ?? null
+  const task = snap.tasks.find((s) => s.id === taskId) ?? null
 
   // Keep the address in step with the selection (no navigation).
   useEffect(() => {
     const q = new URLSearchParams()
     if (projectId) q.set("project", projectId)
     if (sessionId) q.set("session", sessionId)
-    if (storyId) q.set("story", storyId)
+    if (taskId) q.set("task", taskId)
     window.history.replaceState(null, "", q.toString() ? `/?${q}` : "/")
-  }, [projectId, sessionId, storyId])
+  }, [projectId, sessionId, taskId])
 
   const refresh = useCallback(async (pid: string | null) => {
     const r = await workspaceSnapshot(pid)
@@ -97,10 +102,10 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
   useEffect(() => {
     let cancelled = false
     if (!projectId) return
-    const key = `${projectId}/${sessionId ?? ""}/${storyId ?? ""}`
-    workspaceRuns(projectId, sessionId, storyId).then((r) => { if (!cancelled && r.ok) setRunState({ key, runs: r.data }) })
+    const key = `${projectId}/${sessionId ?? ""}/${taskId ?? ""}`
+    workspaceRuns(projectId, sessionId, taskId).then((r) => { if (!cancelled && r.ok) setRunState({ key, runs: r.data }) })
     return () => { cancelled = true }
-  }, [projectId, sessionId, storyId])
+  }, [projectId, sessionId, taskId])
 
   useEffect(() => { if (ask) askRef.current?.showModal(); else askRef.current?.close() }, [ask])
 
@@ -124,16 +129,18 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
   async function pickProject(id: string) {
     setProjectId(id)
     setSessionId(null)
-    setStoryId(null)
+    setTaskId(null)
     setConfirmRemove(false)
     setNote(null)
     stick.current = true
     await refresh(id)
   }
-  /** The second picker: "" (new session), a session id, or "story:<id>". */
+  /** The second picker: "" (new session), a session id, or "task:<id>". */
   function pickSession(id: string) {
-    if (id.startsWith("story:")) { setStoryId(id.slice(6)); setSessionId(null) }
-    else { setSessionId(id || null); setStoryId(null) }
+    if (id.startsWith("task:")) { setTaskId(id.slice(6)); setSessionId(null) }
+    else { setSessionId(id || null); setTaskId(null) }
+    setPinned(null)
+    setAuto(null)
     setConfirmRemove(false)
     setNote(null)
     stick.current = true
@@ -185,7 +192,8 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
   // ---- command buttons ----
   function press(c: WsCommand) {
     const need = names(c.command)
-    const fixed: Record<string, string> = story ? { story: story.key, ...(story.branch ? { branch: story.branch } : {}) } : {}
+    // {task} and {branch} are filled from the open task ({story} is the older name, still filled).
+    const fixed: Record<string, string> = task ? { task: task.key, story: task.key, ...(task.branch ? { branch: task.branch } : {}) } : {}
     if (need.length && !need.every((n) => (fixed[n] ?? "").trim())) {
       setAsk({ cmd: c, values: Object.fromEntries(need.map((n) => [n, fixed[n] ?? ""])) })
       return
@@ -196,7 +204,7 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
     setAsk(null)
     setNote(null)
     stick.current = true
-    const r = await runWorkspaceCommand(c.id, values, sessionId, storyId)
+    const r = await runWorkspaceCommand(c.id, values, sessionId, taskId)
     if (!r.ok) { setNote(r.message); return }
     setRuns((xs) => [...xs, r.data])
   }
@@ -211,6 +219,14 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
   }, [sess.msgs, runs])
 
   const seconds = sess.busySince ? Math.max(0, Math.round((now - sess.busySince) / 1000)) : 0
+  const onAuto = useCallback((id: string | null) => setAuto(id), [])
+  // How full the shown session's context is (OpenCode's last answer: input + cache).
+  const context: ContextUse = useMemo(() => {
+    const last = [...(sess.msgs ?? [])].reverse().find((m) => m.info.role === "assistant" && m.info.tokens)
+    const t = last?.info.tokens
+    const tokens = t ? t.input + t.cache.read + t.cache.write + t.output : 0
+    return tokens ? { tokens, limit: 65_536 } : null
+  }, [sess.msgs])
   const elsewhereCount = snap.elsewhere.length
 
   if (!project) {
@@ -230,16 +246,16 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
               <option key={p.id} value={p.id}>{p.name} — {p.machineName}{p.active ? ` · ${p.active} active` : ""}</option>
             ))}
           </select>
-          <select className="form-input ws-select ws-session" aria-label="Session or story" value={storyId ? `story:${storyId}` : sessionId ?? ""} onChange={(e) => pickSession(e.target.value)}>
+          <select className="form-input ws-select ws-session" aria-label="Session or task" value={taskId ? `task:${taskId}` : sessionId ?? ""} onChange={(e) => pickSession(e.target.value)}>
             <option value="">+ New session</option>
-            {snap.stories.length > 0 && (
-              <optgroup label="Stories">
-                {snap.stories.map((t) => <option key={t.id} value={`story:${t.id}`}>Story {t.number}: {t.title} · {t.statusLabel}</option>)}
+            {snap.tasks.length > 0 && (
+              <optgroup label="Tasks">
+                {snap.tasks.map((t) => <option key={t.id} value={`task:${t.id}`}>{t.title} · {t.statusLabel}</option>)}
               </optgroup>
             )}
-            {snap.sessions.length > 0 && (
+            {snap.sessions.some((s) => !s.job) && (
               <optgroup label="Sessions">
-                {snap.sessions.map((s) => (
+                {snap.sessions.filter((s) => !s.job || s.id === sessionId).map((s) => (
                   <option key={s.id} value={s.id}>{s.live ? `● ${stateLabel(s.live)} · ` : ""}{s.title}</option>
                 ))}
               </optgroup>
@@ -253,7 +269,7 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
         </div>
         <div className="ws-state">
           <button type="button" className={`ws-sound${sound.on ? " is-on" : ""}`} onClick={sound.toggle}
-            title={sound.on ? "Sounds on: a tone when a story or session needs you, fails or finishes. Click to turn off." : "Sounds off. Click to turn on."}
+            title={sound.on ? "Sounds on: a tone when a task or session needs you, fails or finishes. Click to turn off." : "Sounds off. Click to turn on."}
             aria-label={sound.on ? "Turn sounds off" : "Turn sounds on"} aria-pressed={sound.on}>
             {sound.on ? "🔔" : "🔕"}
           </button>
@@ -269,68 +285,83 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
               </div>
             </details>
           )}
-          {sessionId && <span className={`chat-live is-${sess.live}`}>{sess.live === "live" ? "Live" : sess.live === "lost" ? "Reconnecting…" : "Connecting…"}</span>}
+          {shownId && <span className={`chat-live is-${sess.live}`}>{sess.live === "live" ? "Live" : sess.live === "lost" ? "Reconnecting…" : "Connecting…"}</span>}
           {sess.busy ? (
             <>
               <span className="chat-working">{sess.questions.length ? "Waiting for you" : `Working · ${seconds} s`}</span>
-              <button type="button" className="btn btn-small btn-danger" onClick={() => void abort()}>Abort</button>
+              {!task && <button type="button" className="btn btn-small btn-danger" onClick={() => void abort()}>Abort</button>}
             </>
-          ) : sessionId ? <span className="ws-ready">Ready</span> : null}
+          ) : shownId ? <span className="ws-ready">Ready</span> : null}
         </div>
       </div>
 
-      <div className="ws-out" ref={outRef} onScroll={onScroll}>
-        <div className="ws-inner">
-          <div className="ws-head">
-            <span className="ws-title">{story ? `Story ${story.number}: ${story.title}` : current ? current.title : "New session"}</span>
-            <span className="ws-where">in <span className="data-mono">{project.root}</span> on {project.machineName}</span>
-            {current && (confirmRemove ? (
-              <span className="ws-remove">
-                Remove this session and its conversation?{" "}
-                <button type="button" className="btn btn-small btn-danger" onClick={() => void remove()}>Remove</button>{" "}
-                <button type="button" className="btn btn-small" onClick={() => setConfirmRemove(false)}>Cancel</button>
-              </span>
-            ) : (
-              <button type="button" className="data-link ws-remove ws-linkbtn" onClick={() => setConfirmRemove(true)}>Remove session</button>
+      <div className="ws-body">
+        <div className="ws-out" ref={outRef} onScroll={onScroll}>
+          <div className="ws-inner">
+            <div className="ws-head">
+              <span className="ws-title">{current ? current.title : task ? (shownId ? "Session" : task.title) : "New session"}</span>
+              <span className="ws-where"><span className="data-mono">{project.root}</span> · {project.machineName}</span>
+            </div>
+            {snap.unreachable && <div className="form-alert spaced">maw-opencode did not answer: {snap.unreachable}</div>}
+
+            {task && !shownId && <p className="app-empty ws-hint">No session yet. MAW starts the task&apos;s first session as soon as the runner picks it up; it shows here as it works.</p>}
+            {!shownId && !task && timeline.length === 0 && (
+              <p className="app-empty ws-hint">Write the first prompt below to start a session in {project.name}. The command buttons above run in {project.root} on {project.machineName}; their output shows here and is never sent to the model.</p>
+            )}
+            {shownId && sess.msgs === null && !sess.error && <p className="app-empty">Loading the conversation…</p>}
+
+            <div className="chat-list">
+              {timeline.map((it) => it.k === "m"
+                ? <Message key={sess.msgs![it.i]!.info.id} m={sess.msgs![it.i]!} footer={turnFooter(sess.msgs!, it.i, sess.busy)} />
+                : <RunBlock key={it.run.id} run={it.run} onSettled={settled} onError={setNote} />)}
+            </div>
+
+            {shownId && !task && sess.questions.map((q) => (
+              <QuestionCard key={q.id} q={q} onAnswer={async (answers) => {
+                const r = await answerQuestion(shownId, q.id, answers)
+                if (r.ok) sess.dropQuestion(q.id)
+                else sess.setError(r.message)
+              }} />
             ))}
+            {sess.error && <div className="form-alert chat-error">{sess.error}</div>}
+            {note && <div className="form-alert chat-error">{note}</div>}
           </div>
-          {snap.unreachable && <div className="form-alert spaced">maw-opencode did not answer: {snap.unreachable}</div>}
-
-          {story && <StoryView storyId={story.id} onOpenSession={(id) => { pickSession(id); void refresh(projectId) }} />}
-
-          {!sessionId && !story && timeline.length === 0 && (
-            <p className="app-empty ws-hint">Write the first prompt below to start a session in {project.name}. The command buttons above run in {project.root} on {project.machineName}; their output shows here and is never sent to the model.</p>
-          )}
-          {sessionId && sess.msgs === null && !sess.error && <p className="app-empty">Loading the conversation…</p>}
-
-          <div className="chat-list">
-            {timeline.map((it) => it.k === "m"
-              ? <Message key={sess.msgs![it.i]!.info.id} m={sess.msgs![it.i]!} footer={turnFooter(sess.msgs!, it.i, sess.busy)} />
-              : <RunBlock key={it.run.id} run={it.run} onSettled={settled} onError={setNote} />)}
-          </div>
-
-          {sessionId && sess.questions.map((q) => (
-            <QuestionCard key={q.id} q={q} onAnswer={async (answers) => {
-              const r = await answerQuestion(sessionId, q.id, answers)
-              if (r.ok) sess.dropQuestion(q.id)
-              else sess.setError(r.message)
-            }} />
-          ))}
-          {sess.error && <div className="form-alert chat-error">{sess.error}</div>}
-          {note && <div className="form-alert chat-error">{note}</div>}
         </div>
+
+        {task ? (
+          <TaskPanel taskId={task.id} shownSession={shownId} context={context} onAuto={onAuto}
+            onOpenSession={(id) => { setPinned(id === auto ? null : id); stick.current = true; void refresh(projectId) }} />
+        ) : (
+          <aside className="side">
+            <div className="side-title is-static">{current ? current.title : "New session"}</div>
+            <div className="side-meta"><span className="data-mono">{project.root}</span><span>{project.machineName}</span></div>
+            {current && <div className="side-progress">{current.live ? stateLabel(current.live) : "Ready"}{current.user ? ` · started by ${current.user}` : ""}</div>}
+            <ContextMeter use={context} />
+            {current && (
+              <div className="side-sec side-foot">
+                {confirmRemove ? (<>
+                  <p className="side-act-text">Remove this session and its conversation?</p>
+                  <div className="side-act-buttons">
+                    <button type="button" className="btn btn-small" onClick={() => setConfirmRemove(false)}>Cancel</button>
+                    <button type="button" className="btn btn-small btn-danger" onClick={() => void remove()}>Remove</button>
+                  </div>
+                </>) : <button type="button" className="side-link ws-linkbtn" onClick={() => setConfirmRemove(true)}>Remove session</button>}
+              </div>
+            )}
+          </aside>
+        )}
       </div>
 
       <div className="ws-compose">
-        <div className="ws-inner ws-compose-row">
+        <div className="ws-compose-row">
           <textarea
-            className="form-input chat-input ws-input" rows={2} value={draft} aria-label="Prompt" disabled={!!story}
-            placeholder={story ? "MAW works a story in its own sessions (listed under Sessions); open one, or pick + New session, to prompt the model."
+            className="form-input chat-input ws-input" rows={2} value={draft} aria-label="Prompt" disabled={!!task}
+            placeholder={task ? "MAW works this task in its own sessions; to prompt the model yourself, pick + New session."
               : !sessionId ? `New session in ${project.name}: write a prompt. Enter sends, Shift+Enter adds a line.`
               : sess.busy ? "Write the next prompt; it is sent after the current turn." : "Write a prompt. Enter sends, Shift+Enter adds a line."}
             onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey}
           />
-          <button type="button" className="btn btn-primary ws-send" onClick={() => void send()} disabled={sending || !draft.trim() || !!story}>
+          <button type="button" className="btn btn-primary ws-send" onClick={() => void send()} disabled={sending || !draft.trim() || !!task}>
             {sending ? "Sending…" : sess.busy ? "Queue" : "Send"}
           </button>
         </div>

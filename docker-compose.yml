@@ -119,8 +119,8 @@ services:
     networks:
       - maw-net
 
-  # The runner (Phase 4): MAW's loop that carries stories forward one model
-  # session at a time (web/scripts/runner.ts, lib/story-runner.ts): story
+  # The runner (Phase 4): MAW's loop that carries tasks forward one model
+  # session at a time (web/scripts/runner.ts, lib/task-runner.ts): task
   # checklist, one session per item, the phases; it stops where you are
   # needed (items for you, phases to approve). All state is in the database,
   # so it is safe to restart; one session at a time across MAW (llama.cpp

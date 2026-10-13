@@ -1,14 +1,14 @@
 // Which tone the Dashboard plays for a change (no database here: the browser
 // imports it). The digest comes from lib/alerts.ts.
 
-export type StoryAlert = {
+export type TaskAlert = {
   id: string; project: string; number: number; title: string
   status: string
   /** steps waiting for your check */
   checks: number
   /** checklist items waiting for your answer */
   items: number
-  /** phases with steps ready for you, or (story in progress) the current phase waiting for Plan steps */
+  /** phases with steps ready for you, or (task in progress) the current phase waiting for Plan steps */
   approvals: number
   /** the runner's wait note (branch) */
   note: string
@@ -18,12 +18,12 @@ export type Tone = "finished" | "error" | "question" | "stopped"
 const RANK: Tone[] = ["error", "question", "finished", "stopped"]
 
 /** The tone for what changed between two digests (null: nothing worth a sound). */
-export function toneFor(before: StoryAlert[], after: StoryAlert[], sessions: { before: Map<string, string>; after: Map<string, string> }): Tone | null {
+export function toneFor(before: TaskAlert[], after: TaskAlert[], sessions: { before: Map<string, string>; after: Map<string, string> }): Tone | null {
   const tones = new Set<Tone>()
   const old = new Map(before.map((s) => [s.id, s]))
   for (const s of after) {
     const o = old.get(s.id)
-    if (!o) continue // a new story is yours: no sound
+    if (!o) continue // a new task is yours: no sound
     if (s.status !== o.status) {
       if (s.status === "done") tones.add("finished")
       else if (s.status === "blocked") tones.add("error")

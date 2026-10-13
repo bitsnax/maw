@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react"
 import type { OcMessage, OcPart, OcQuestion } from "@/lib/opencode"
+import { Code, langOf } from "./code"
 
 // The pieces of a conversation shown in the Dashboard's output window:
 // messages (prompts, streamed answers, thinking, tool rows), question cards,
@@ -71,6 +72,19 @@ export function Message({ m, footer }: { m: Msg; footer: string | null }) {
   if (m.info.role === "user") {
     const text = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("\n").trim()
     if (!text) return null
+    // A long prompt (MAW's instructions for a task session, or a pasted one) folds to one line.
+    const lines = text.split("\n").length
+    if (text.length > 700 || lines > 10) {
+      const first = text.split("\n").find((l) => l.trim() && !/^Session:/.test(l))?.trim() ?? ""
+      return (
+        <div className="chat-msg is-user">
+          <details className="chat-prompt">
+            <summary><span className="chat-prompt-label">Prompt · {lines} lines</span> <span className="chat-prompt-first">{first.length > 140 ? `${first.slice(0, 140)}…` : first}</span></summary>
+            <Code text={text} lang="markdown" title="prompt" wrap />
+          </details>
+        </div>
+      )
+    }
     return <div className="chat-msg is-user"><div className="chat-bubble">{text}</div></div>
   }
   const shown = parts.filter((p) => ["text", "reasoning", "tool"].includes(p.type))
@@ -105,6 +119,26 @@ function toolSummary(p: OcPart): string {
   return s("command") || s("filePath") || s("pattern") || p.state?.title || s("description") || s("url") || ""
 }
 
+/** What a tool row shows when opened: the code it read or wrote (highlighted
+ *  by file type), an edit as a diff, a command's output. */
+function toolBody(p: OcPart, body: string): { text: string; lang: string; title: string } {
+  const i = p.state?.input ?? {}
+  const s = (k: string) => (typeof i[k] === "string" ? (i[k] as string) : "")
+  const file = s("filePath")
+  if (p.tool === "edit" && (s("oldString") || s("newString"))) {
+    const lines = (t: string, m: string) => (t ? t.split("\n").map((l) => `${m}${l}`) : [])
+    return { text: [...lines(s("oldString"), "-"), ...lines(s("newString"), "+")].join("\n"), lang: "diff", title: `${file} · ${body.split("\n")[0] ?? ""}` }
+  }
+  if (p.tool === "write" && s("content")) return { text: s("content"), lang: langOf(file), title: file }
+  if (p.tool === "read") {
+    // OpenCode's read answer: <path>, then the numbered lines inside <content>.
+    const m = /<content>\n?([\s\S]*?)\n?<\/content>/.exec(body)
+    return { text: m ? m[1]! : body, lang: m ? langOf(file) : "", title: file }
+  }
+  if (p.tool === "bash") return { text: body, lang: "", title: "output" }
+  return { text: body, lang: "", title: "" }
+}
+
 function ToolRow({ p }: { p: OcPart }) {
   const st = p.state?.status ?? "pending"
   const live = typeof p.state?.metadata?.output === "string" ? (p.state.metadata.output as string) : ""
@@ -124,7 +158,10 @@ function ToolRow({ p }: { p: OcPart }) {
         <span className="chat-tool-what data-mono">{toolSummary(p)}</span>
         <span className="chat-tool-status">{status}</span>
       </summary>
-      {body ? <pre className="logs-body chat-tool-out">{body.length > 20000 ? body.slice(0, 20000) + "\n…" : body}</pre> : null}
+      {body ? (() => {
+        const b = toolBody(p, body.length > 20000 ? body.slice(0, 20000) + "\n…" : body)
+        return <Code text={b.text} lang={b.lang} title={b.title} className="chat-tool-out" />
+      })() : null}
     </details>
   )
 }
@@ -134,9 +171,10 @@ function ToolRow({ p }: { p: OcPart }) {
  *  interpreted, and nothing becomes HTML. */
 function renderText(text: string): ReactNode[] {
   const out: ReactNode[] = []
+  const langs = [...text.matchAll(/```([^\n]*)\n?/g)].map((m) => m[1]!.trim().split(/\s+/)[0] ?? "")
   const blocks = text.split(/```[^\n]*\n?/)
   blocks.forEach((b, i) => {
-    if (i % 2 === 1) { out.push(<pre key={i} className="logs-body chat-code">{b.replace(/\n$/, "")}</pre>); return }
+    if (i % 2 === 1) { out.push(<Code key={i} text={b.replace(/\n$/, "")} lang={langs[(i - 1) / 2] ?? ""} className="chat-code" />); return }
     const lines = b.split("\n")
     out.push(
       <span key={i}>
@@ -202,7 +240,7 @@ export function QuestionCard({ q, onAnswer }: { q: OcQuestion; onAnswer: (answer
   )
 }
 
-// ---- markdown for stories (survey, plan, steps) ---------------------------------
+// ---- markdown for tasks (survey, plan, steps) ---------------------------------
 
 /** Markdown as the plan files use it: ``` code blocks, | tables |, # headings,
  *  `- ` lists (kept as typed), **bold** and `code`. Nothing becomes HTML. */
@@ -218,9 +256,10 @@ export function Markdown({ text, className }: { text: string; className?: string
     const l = lines[i]!
     if (/^\s*```/.test(l)) {
       flush()
+      const lang = l.trim().slice(3).trim().split(/\s+/)[0] ?? ""
       const body: string[] = []
       for (i++; i < lines.length && !/^\s*```/.test(lines[i]!); i++) body.push(lines[i]!)
-      out.push(<pre key={`c${out.length}`} className="logs-body md-code">{body.join("\n")}</pre>)
+      out.push(<Code key={`c${out.length}`} text={body.join("\n")} lang={lang} className="md-code" />)
       continue
     }
     if (/^\s*\|.*\|\s*$/.test(l)) {

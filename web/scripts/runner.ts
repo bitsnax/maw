@@ -1,6 +1,6 @@
 /**
- * maw-runner: MAW's loop that carries stories forward one model session at
- * a time (lib/story-runner.ts). Runs as the maw-runner service (the migrate
+ * maw-runner: MAW's loop that carries tasks forward one model session at
+ * a time (lib/task-runner.ts). Runs as the maw-runner service (the migrate
  * image: `npx tsx scripts/runner.ts`). All state is in the database, so a
  * restart picks up where it was; a running session keeps running in
  * maw-opencode and is watched again.
@@ -10,7 +10,7 @@
  */
 
 import { prisma } from "../lib/prisma"
-import { runnerTick } from "../lib/story-runner"
+import { runnerTick } from "../lib/task-runner"
 
 const log = (line: string) => console.log(`${new Date().toISOString().slice(0, 19).replace("T", " ")} ${line}`)
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))

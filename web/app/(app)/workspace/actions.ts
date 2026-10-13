@@ -6,8 +6,8 @@ import { liveStates, type LiveState } from "@/lib/session-status"
 import { removeSession, startSession } from "@/lib/sessions"
 import { listCommands } from "@/lib/project-commands"
 import { listRuns, settleRun, startRun, type RunView } from "@/lib/command-runs"
-import { STORY_STATUS, listStories, storyKey } from "@/lib/stories"
-import { storyAlerts, type StoryAlert } from "@/lib/alerts"
+import { TASK_STATUS, listTasks, taskKey } from "@/lib/tasks"
+import { taskAlerts, type TaskAlert } from "@/lib/alerts"
 
 // The Dashboard workspace (admin only, like Projects): the project and
 // session pickers, the project's command buttons, and button runs shown in
@@ -19,18 +19,18 @@ type Reply<T> = { ok: true; data: T } | { ok: false; message: string }
 export type WsProject = { id: string; name: string; machineName: string; root: string; active: number }
 export type WsSession = { id: string; title: string; updatedAt: string; user: string | null; live: LiveState | null; job: boolean }
 export type WsCommand = { id: string; title: string; command: string }
-export type WsStory = { id: string; number: number; key: string; title: string; status: string; statusLabel: string; branch: string | null }
+export type WsTask = { id: string; number: number; key: string; title: string; status: string; statusLabel: string; branch: string | null }
 export type WsElsewhere = { id: string; title: string; projectId: string; projectName: string; live: LiveState; job: boolean }
 export type WsSnapshot = {
   projects: WsProject[]
   project: WsProject | null
   sessions: WsSession[]
-  stories: WsStory[]
+  tasks: WsTask[]
   commands: WsCommand[]
   elsewhere: WsElsewhere[]
   unreachable: string | null
-  /** Every story's state, for the Dashboard's sounds. */
-  alerts: StoryAlert[]
+  /** Every task's state, for the Dashboard's sounds. */
+  alerts: TaskAlert[]
 }
 
 /** Everything the toolbar shows, for one project (the first when none is
@@ -52,7 +52,7 @@ export async function workspaceSnapshot(projectId: string | null): Promise<Reply
     active: p.sessions.filter((s) => states.has(s.id)).length,
   }))
   const row = rows.find((p) => p.id === projectId) ?? rows[0] ?? null
-  const [alerts, jobRows] = await Promise.all([storyAlerts(), prisma.storyJob.findMany({ where: { sessionId: { in: [...states.keys()] } }, select: { sessionId: true } })])
+  const [alerts, jobRows] = await Promise.all([taskAlerts(), prisma.taskJob.findMany({ where: { sessionId: { in: [...states.keys()] } }, select: { sessionId: true } })])
   const jobs = new Set(jobRows.map((j) => j.sessionId))
   const elsewhere = rows.filter((p) => p.id !== row?.id).flatMap((p) =>
     p.sessions.filter((s) => states.has(s.id)).map((s) => ({ id: s.id, title: s.title, projectId: p.id, projectName: p.name, live: states.get(s.id)!, job: jobs.has(s.id) })))
@@ -65,7 +65,7 @@ export async function workspaceSnapshot(projectId: string | null): Promise<Reply
         id: s.id, title: s.title, updatedAt: s.updatedAt.toISOString(), user: s.user?.name || s.user?.email || null, live: states.get(s.id) ?? null,
         job: jobs.has(s.id),
       })),
-      stories: row ? (await listStories(row.id)).map((t) => ({ id: t.id, number: t.number, key: storyKey(t), title: t.title, status: t.status, statusLabel: STORY_STATUS[t.status] ?? t.status, branch: t.branch })) : [],
+      tasks: row ? (await listTasks(row.id)).map((t) => ({ id: t.id, number: t.number, key: taskKey(t), title: t.title, status: t.status, statusLabel: TASK_STATUS[t.status] ?? t.status, branch: t.branch })) : [],
       commands: row ? (await listCommands(row.id)).map((c) => ({ id: c.id, title: c.title, command: c.command })) : [],
       elsewhere,
       unreachable,
@@ -90,17 +90,17 @@ export async function removeWorkspaceSession(sessionId: string): Promise<Reply<n
 
 /** Button runs shown with this session (null: those made with none open);
  *  runs that ended while nobody watched are settled first. */
-export async function workspaceRuns(projectId: string, sessionId: string | null, storyId: string | null = null): Promise<Reply<RunView[]>> {
+export async function workspaceRuns(projectId: string, sessionId: string | null, taskId: string | null = null): Promise<Reply<RunView[]>> {
   if (!(await adminSession())) return { ok: false, message: "The workspace is for admins." }
-  const runs = await listRuns(projectId, sessionId, 40, storyId)
+  const runs = await listRuns(projectId, sessionId, 40, taskId)
   const settled = await Promise.all(runs.map((r) => (r.state === "running" ? settleRun(r.id) : r)))
   return { ok: true, data: settled.filter((r): r is RunView => !!r) }
 }
 
-export async function runWorkspaceCommand(commandId: string, values: Record<string, string>, sessionId: string | null, storyId: string | null = null): Promise<Reply<RunView>> {
+export async function runWorkspaceCommand(commandId: string, values: Record<string, string>, sessionId: string | null, taskId: string | null = null): Promise<Reply<RunView>> {
   const a = await adminSession()
   if (!a) return { ok: false, message: "Only an admin can run commands." }
-  const r = await startRun(commandId, values, sessionId, a.user.id, storyId)
+  const r = await startRun(commandId, values, sessionId, a.user.id, taskId)
   return r.ok ? { ok: true, data: r.run } : { ok: false, message: r.message }
 }
 

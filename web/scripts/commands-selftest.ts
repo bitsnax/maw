@@ -36,8 +36,8 @@ function pure() {
   const f = fillCommand('git commit -m "{message}"', { message: `it's "done" $HOME` })
   check("quotes around a placeholder dropped; value single-quoted",
     f.ok && f.command === `git commit -m 'it'\\''s "done" $HOME'`, f)
-  const g = fillCommand("git checkout -b {branch}", { branch: "maw/story-1" })
-  check("no placeholders left after filling", g.ok && g.command === "git checkout -b 'maw/story-1'", g)
+  const g = fillCommand("git checkout -b {branch}", { branch: "maw/task-1" })
+  check("no placeholders left after filling", g.ok && g.command === "git checkout -b 'maw/task-1'", g)
 }
 
 async function run(m: { id: string }, root: string, command: string) {
