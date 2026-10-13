@@ -239,7 +239,7 @@ async function storyTools(projectId: string, directory: string, plainSession: st
   const b = r2.ok ? r2.tools.find((t) => t.tool === "bash") : undefined
   check("bash in a story session: git commit refused, nothing run", b?.state?.status === "error" && out(b).includes("Refused: `git commit`"), b?.state)
   const done = await prisma.storyStep.findUniqueOrThrow({ where: { id: step.id } })
-  check("step_finish through OpenCode: step done", done.status === "done" && done.result.includes("nothing to change"), done)
+  check("step_finish through OpenCode: step verifying (MAW verifies next)", done.status === "verifying" && done.result.includes("nothing to change"), done)
 
   const r3 = await run(plainSession, 'CALL item_add {"text":"x"}\nCALL bash {"command":"git branch --show-current","timeout":60000}')
   const ni = r3.ok ? r3.tools.filter((t) => t.tool === "item_add").at(-1) : undefined

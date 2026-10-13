@@ -14,6 +14,7 @@ beside llama.cpp (`llama-cpp`, `192.168.4.201:8081`).
 | web | maw-web | Next.js standalone server on :3000 |
 | postgres | maw-postgres | PostgreSQL 16; `127.0.0.1:5434` on the host only |
 | opencode | maw-opencode | OpenCode 1.19.0 server (`opencode serve` on :4096, maw-net only); the 27B on llama.cpp; tools call back into maw-web |
+| runner | maw-runner | MAW's loop that carries stories forward, one model session at a time (`scripts/runner.ts`, the migrate image) |
 
 Networks: `maw-net` (internal), `proxy-nw` (external, shared with the edge).
 Volumes: `maw-pgdata`; `maw-opencode-data` (OpenCode's sessions, plugins,
@@ -175,6 +176,60 @@ it, prompt it, watch it work, abort it.
 - **Project profile** (project page, kept in MAW): the verify commands MAW
   runs after each step, the protected branches, and the profile text every
   story session is given.
+
+## Stories (admin only)
+
+A **story** is work too big for one model session (llama.cpp's context is
+65,536 tokens). MAW breaks it down and carries it through in short sessions,
+keeping every bit of state in its database: nothing is read from or written
+into the project for this (no `plan/` folders, no handoff files).
+
+    Story ─ Phase ─ Step
+
+- **You write it** on the project page (Stories → New story): a title, the
+  request (what to build, what is out of scope, when it is done) and the
+  **branch**. MAW changes files only on that branch; you create it with your
+  own command button. The branch is filled in from the title.
+- **The project profile** (project page) holds what every story session is
+  given: the profile text, the **verify commands** MAW runs after each step,
+  the **deploy command** MAW runs to put the changes in front of you, and
+  the **protected branches** MAW never changes files on.
+- **maw-runner** does the rest, one session at a time across MAW (llama.cpp
+  has one slot), and stops wherever you are needed. Its state is in the
+  database, so restarting it is safe.
+
+What MAW does, and where it stops for you:
+
+| Stage | Sessions | Stops for you |
+|---|---|---|
+| Story planning | a checklist of what the plan needs, one session per item, then the story plan and its phases | items only you can answer; **Phases ready**: Approve phases or Plan again (with a direction) |
+| Phase planning (one phase at a time) | **Plan steps** (with a direction, optional), the phase's checklist, one session per item, then the steps | items only you can answer; **Steps ready**: Approve steps or Plan again |
+| Steps (in order) | one session per step; the model may edit files (no commits, no deploys); then MAW runs the verify commands, deploys when needed, and keeps git status and diff with the step | a step marked **Check**: Works as described / Doesn't work… (it runs again with your note); a **blocked** step: Try again (with a direction) or Mark done |
+| Done | the last step of the last phase | commit, push and merge with your buttons |
+
+- **Deploys are MAW's**, never the model's: after the verify commands pass,
+  before any check, after a step the planner marked *deploy* (a schema
+  change, a new route), and after a phase's last step. A failed deploy
+  blocks the step with its output.
+- **The branch check** runs before every step: on a protected branch, on
+  another branch than the story's, or with no story branch, MAW waits and
+  the Dashboard says why (the branch can be set right there).
+- **In story sessions** the bash tool refuses git that changes state and
+  docker commands that change what runs; planning sessions cannot write
+  files at all.
+- **Your directions and answers** go into every later session's prompt,
+  marked as overriding the plan. A done step can be **reopened** with a
+  note.
+- **On the Dashboard** a story shows where it is ("Phase 1 of 2 · Step 1.2
+  of 3"), what MAW is doing now, or **Needed from you** and what that is;
+  every session MAW ran is listed under Sessions and opens in the output
+  window. **Pause** stops the running session; Resume goes on from there.
+  **Download** gives the whole story as markdown.
+- **Sounds** (the bell in the toolbar, remembered per browser): `stopped`
+  when a story or your session stops for you, `question` when you are asked
+  something or a step needs your check, `error` when a story is blocked or a
+  session fails, `finished` when a story is done. Browsers play sound only
+  after one click on the page.
 
 ## maw-opencode (opencode/)
 

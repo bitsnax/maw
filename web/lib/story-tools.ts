@@ -223,7 +223,7 @@ export async function handleStoryTool(name: StoryToolName, sessionId: string, a:
       const number = (last?.number ?? 0) + 1
       await prisma.storyStep.create({
         data: {
-          phaseId: ph.id, number, title, files: text(a, "files", false, 1000) ?? "", check: bool(a, "needsCheck") ?? false,
+          phaseId: ph.id, number, title, files: text(a, "files", false, 1000) ?? "", check: bool(a, "needsCheck") ?? false, deploy: bool(a, "needsDeploy") ?? false,
           goal: text(a, "goal", true)!, readBudget: text(a, "readBudget", false) ?? "", context: text(a, "context", false) ?? "",
           changes: text(a, "changes", true)!, verification: text(a, "verification", false) ?? "", manualCheck: text(a, "manualCheck", false) ?? "",
         },
@@ -247,7 +247,8 @@ export async function handleStoryTool(name: StoryToolName, sessionId: string, a:
       const st = await prisma.storyStep.findUniqueOrThrow({ where: { id: job.stepId } })
       await prisma.storyStep.update({
         where: { id: st.id },
-        data: { status, result: `${st.result}${st.result && !st.result.endsWith("\n") ? "\n" : ""}${status === "done" ? "Done" : "Blocked"}: ${summary}\n` },
+        // done → verifying: the step is Done only once MAW's verify commands pass.
+        data: { status: status === "done" ? "verifying" : "blocked", result: `${st.result}${st.result && !st.result.endsWith("\n") ? "\n" : ""}${status === "done" ? "Done" : "Blocked"}: ${summary}\n` },
       })
       await prisma.storyJob.update({ where: { id: job.id }, data: { note: `${status}: ${summary}`.slice(0, 2000) } })
       await touch()
@@ -269,5 +270,13 @@ export function gitWrites(command: string): string[] {
   const out: string[] = []
   const re = /(?:^|[\s;&|(`$])git((?:\s+(?:-C|-c|--git-dir|--work-tree|--namespace)\s+\S+|\s+--?[\w-]+(?:=\S+)?)*)\s+([a-z][\w-]*)/g
   for (const m of command.matchAll(re)) if (GIT_WRITE.has(m[2]!)) out.push(m[2]!)
+  return [...new Set(out)]
+}
+
+/** docker / docker compose commands that change what runs (deploys are MAW's in story sessions). */
+export function dockerWrites(command: string): string[] {
+  const out: string[] = []
+  const re = /(?:^|[\s;&|(`$])(docker(?:-compose|\s+compose)?)((?:\s+--?[\w-]+(?:[=\s]\S+)?)*)\s+(up|down|restart|stop|start|build|rm|kill|run|exec|create|pull|push)\b/g
+  for (const m of command.matchAll(re)) out.push(`${m[1]!.replace(/\s+/g, " ")} ${m[3]}`)
   return [...new Set(out)]
 }

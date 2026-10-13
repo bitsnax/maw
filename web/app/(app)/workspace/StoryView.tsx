@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { answerStoryItem, phaseControl, stepControl, storyControl, storyView, type StoryView as SV } from "./story-actions"
+import { answerStoryItem, phaseControl, saveStoryBranch, stepControl, storyControl, storyView, type StoryView as SV } from "./story-actions"
 import { Markdown } from "./conversation"
 
 // A story in the Dashboard's output window:
@@ -28,7 +28,9 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   // The direction box under the bar: what it is for, and its text.
-  const [dir, setDir] = useState<{ for: "replan-phases" | "plan-steps" | "replan-steps" | "not-right" | "retry"; text: string } | null>(null)
+  const [dir, setDir] = useState<{ for: "replan-phases" | "plan-steps" | "replan-steps" | "not-right" | "retry" | "reopen"; text: string; stepId?: string } | null>(null)
+  // The branch box under "no branch": the suggested name until you type.
+  const [branch, setBranch] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   const load = useCallback(async () => {
@@ -79,10 +81,11 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
   }
   // The step being worked on: the current phase's first step that is not done.
   const step = cur && cur.status === "in-progress" ? cur.steps.find((x) => x.status !== "done") ?? null : null
-  const stepAct = async (a: "checked" | "not-right" | "retry" | "mark-done", text?: string) => {
-    if (!step) return
+  const stepAct = async (a: "checked" | "not-right" | "retry" | "mark-done" | "reopen", text?: string, stepId?: string) => {
+    const id = stepId ?? step?.id
+    if (!id) return
     setBusy(true)
-    const r = await stepControl(step.id, a, text)
+    const r = await stepControl(id, a, text)
     setBusy(false)
     if (!r.ok) setError(r.message)
     else { setDir(null); await load() }
@@ -116,6 +119,7 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
     "replan-steps": [`What should change in phase ${cur?.number ?? ""}'s steps? (optional; the next plan of the steps reads it)`, "Plan again"],
     "not-right": [`What is not right in step ${cur?.number ?? ""}.${step?.number ?? ""}? (the step runs again, and its next session reads this)`, "Run the step again"],
     "retry": [`Direction for step ${cur?.number ?? ""}.${step?.number ?? ""} (optional; its next session reads it and follows it)`, "Try again"],
+    "reopen": ["What is wrong with this step? (it runs again, and its next session reads this)", "Reopen the step"],
   } as const
   const dirBox = dir && (
     <div className="story-replan">
@@ -124,12 +128,22 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
       <span className="story-run-actions">
         <button type="button" className="btn btn-small" onClick={() => setDir(null)}>Cancel</button>
         <button type="button" className="btn btn-small btn-primary"
-          disabled={busy || (dir.for === "not-right" && !dir.text.trim())}
+          disabled={busy || ((dir.for === "not-right" || dir.for === "reopen") && !dir.text.trim())}
           onClick={() => void (dir.for === "replan-phases" ? act("replan-phases", dir.text)
-            : dir.for === "not-right" || dir.for === "retry" ? stepAct(dir.for, dir.text) : phaseAct(dir.for, dir.text))}>{DIR_LABEL[dir.for][1]}</button>
+            : dir.for === "not-right" || dir.for === "retry" || dir.for === "reopen" ? stepAct(dir.for, dir.text, dir.stepId) : phaseAct(dir.for, dir.text))}>{DIR_LABEL[dir.for][1]}</button>
       </span>
     </div>
   )
+
+  // Where the story is, always shown first in the bar.
+  const where = s.status === "planning" ? "Story planning"
+    : s.status === "phases-ready" ? "Story plan: phases to approve"
+    : s.status === "done" ? "Every phase done"
+    : cur ? `Phase ${cur.number} of ${s.phases.length}: ${cur.title}${step ? ` · Step ${cur.number}.${step.number} of ${cur.steps.length}: ${step.title}` : ""}`
+    : ""
+  // Whether the next move is yours (the bar says what it is).
+  const needed = !s.now && (["paused", "blocked", "phases-ready"].includes(s.status) || forYou > 0 || (s.status === "in-progress" && (
+    !s.branch || !!s.runnerNote || curForYou > 0 || cur?.status === "pending" || cur?.status === "steps-ready" || step?.status === "waiting-check" || step?.status === "blocked")))
 
   const bar = (() => {
     if (dir) return dirBox
@@ -184,15 +198,26 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
         // The phase is in progress: its steps are carried out one by one.
         if (step?.status === "waiting-check") return (<>
           <div className="story-run-text">
-            <strong>Step {cur.number}.{step.number} needs your check.</strong> Its changes passed the verify commands.
+            <strong>Step {cur.number}.{step.number}: check it yourself.</strong> MAW made the change{step.deployOutput ? " and deployed it" : ""}, and it passed the verify commands. Clicking below changes nothing: look first, then say how it went.
             {step.manualCheck.trim() && <div className="story-run-check"><Markdown text={step.manualCheck} /></div>}
           </div>
           <span className="story-run-actions">
-            <button type="button" className="btn btn-small" disabled={busy} onClick={() => setDir({ for: "not-right", text: "" })}>Not right…</button>
-            <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void stepAct("checked")}>Checked</button>
+            <button type="button" className="btn btn-small" disabled={busy} onClick={() => setDir({ for: "not-right", text: "" })}>Doesn&apos;t work…</button>
+            <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void stepAct("checked")}>Works as described</button>
           </span>
         </>)
-        if (s.runnerNote) return <span className="story-run-text">Waiting: {s.runnerNote}</span>
+        if (step?.status === "deploying") return <span className="story-run-text"><span className="chat-working">Deploying</span> after step {cur.number}.{step.number}: MAW is running the project&apos;s deploy command.</span>
+        if (!s.branch) return (<>
+          <span className="story-run-text">{s.runnerNote || "This story has no branch. MAW changes files only on the story's own branch: give it one here, then create it with your command button."}</span>
+          <span className="story-run-actions">
+            <input className="form-input data-mono story-branch-input" aria-label="Story branch" value={branch ?? `story-${s.key}`} onChange={(e) => setBranch(e.target.value)} />
+            <button type="button" className="btn btn-small btn-primary" disabled={busy || !(branch ?? `story-${s.key}`).trim()} onClick={async () => {
+              setBusy(true); const r = await saveStoryBranch(s.id, branch ?? `story-${s.key}`); setBusy(false)
+              if (!r.ok) setError(r.message); else { setBranch(null); await load() }
+            }}>Save branch</button>
+          </span>
+        </>)
+        if (s.runnerNote) return <span className="story-run-text">{s.runnerNote}</span>
         return working(0, "")
       case "done": return <span className="story-run-text">Done: every phase is done. The changes are in the project&apos;s working tree; commit and merge them with your buttons.</span>
       default: return null
@@ -210,7 +235,12 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
         </span>
       </div>
 
-      {bar && <div className={`story-run is-${s.status}${cur && s.status === "in-progress" ? ` is-phase-${cur.status}` : ""}`} role="status">{bar}</div>}
+      {bar && (
+        <div className={`story-run is-${s.status}${cur && s.status === "in-progress" ? ` is-phase-${cur.status}` : ""}${needed ? " is-needed" : ""}`} role="status">
+          {(where || needed) && <div className="story-run-where">{needed && <span className="story-needed">Needed from you</span>}{where}</div>}
+          {bar}
+        </div>
+      )}
 
       <section className="story-sec">
         <h3 className="story-h">Request</h3>
@@ -262,6 +292,7 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
                       <span className="story-step-n">{p.number}.{x.number}</span>
                       <span className="story-step-title">{x.title}</span>
                       {x.check && <span className="story-dev">Check</span>}
+                      {x.deploy && <span className="story-dev is-deploy">Deploy</span>}
                       <span className="story-step-status">{x.statusLabel}</span>
                     </summary>
                     <div className="story-step-body">
@@ -273,6 +304,12 @@ export default function StoryView({ storyId, onOpenSession }: { storyId: string;
                         ))}
                       {x.verifyOutput.trim() && (
                         <details className="story-sub story-out"><summary className="story-sub-h">Verify output</summary><pre className="story-pre">{x.verifyOutput}</pre></details>
+                      )}
+                      {x.deployOutput.trim() && (
+                        <details className="story-sub story-out"><summary className="story-sub-h">Deploy output</summary><pre className="story-pre">{x.deployOutput}</pre></details>
+                      )}
+                      {x.status === "done" && (p.id === cur?.id || (s.status === "done" && p.number === s.phases.length)) && (
+                        <div><button type="button" className="btn btn-small" disabled={busy} onClick={() => { setDir({ for: "reopen", text: "", stepId: x.id }); setTimeout(() => document.querySelector(".story-run")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50) }}>Reopen…</button></div>
                       )}
                       {x.diff.trim() && (
                         <details className="story-sub story-out"><summary className="story-sub-h">Changes after this step (git status and diff, not committed)</summary><pre className="story-pre">{x.diff}</pre></details>

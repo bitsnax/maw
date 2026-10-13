@@ -177,6 +177,9 @@ model Project {
   // worked on.
   profile           String   @default("")
   verifyCommands    String[] @default([])
+  // run by MAW (never the model) to put the changes in front of you: before a
+  // manual check, when a phase ends, and after steps marked deploy
+  deployCommand     String   @default("")
   protectedBranches String[] @default([])
 
   @@unique([machineId, root])
@@ -323,6 +326,8 @@ model StoryStep {
   title        String
   files        String     @default("")
   check        Boolean    @default(false)
+  // MAW runs the project's deploy command after this step (later steps need it running)
+  deploy       Boolean    @default(false)
   status       String     @default("pending")
   goal         String     @default("")
   readBudget   String     @default("")
@@ -334,6 +339,7 @@ model StoryStep {
   verifyOutput String     @default("")
   // git status and git diff of the project after the step (uncommitted changes)
   diff         String     @default("")
+  deployOutput String     @default("")
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
   jobs         StoryJob[]

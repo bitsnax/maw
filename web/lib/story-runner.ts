@@ -1,14 +1,14 @@
 import { mkdirSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { prisma } from "./prisma"
-import { getStory, type FullStory } from "./stories"
+import { checkStoryInput, getStory, type FullStory } from "./stories"
 import { startSession } from "./sessions"
 import { workspacePath } from "./workspace"
 import { WORKSPACES } from "./tools"
 import { ocAbort, ocMessages, ocPrompt, ocQuestionReject, ocQuestions, ocStatus } from "./opencode"
 import { checklistPrompt, itemPrompt, phaseChecklistPrompt, phaseItemPrompt, phaseStepsPrompt, phasesPrompt, stepPrompt } from "./story-prompts"
 import { stepMd, type JobKind } from "./story-tools"
-import { branchProblem, projectChanges, runVerify } from "./story-steps"
+import { branchProblem, projectChanges, runDeploy, runVerify } from "./story-steps"
 
 // The runner: MAW's own loop (scripts/runner.ts, the maw-runner service) that
 // carries stories forward one model session at a time. All its state is in
@@ -154,12 +154,17 @@ async function stepAction(s: FullStory, ph: FullStory["phases"][number]): Promis
   const at = `${ph.number}.${st.number}`
   if (st.status === "waiting-check") return { kind: "wait", why: `step ${at} waits for your check` }
   if (st.status === "blocked") { await block(s.id); return { kind: "wait", why: `step ${at} is blocked` } }
-  if (st.status === "verifying") return { kind: "verify", stepId: st.id }
+  if (st.status === "verifying" || st.status === "deploying") return { kind: "verify", stepId: st.id }
   const ended = await prisma.storyJob.count({ where: { stepId: st.id, state: "done", note: NOFINISH } })
   if (ended >= STEP_SESSIONS) {
     await prisma.storyStep.update({ where: { id: st.id }, data: { status: "blocked", result: addLine(st.result, `MAW: ${STEP_SESSIONS} sessions ended without step_finish.`) } })
     await block(s.id)
     return { kind: "wait", why: `step ${at} is blocked` }
+  }
+  if (!s.branch) {
+    const why = "This story has no branch. MAW changes files only on the story's own branch: give it one here, then create it with your command button."
+    await noteRunner(s, why)
+    return { kind: "wait", why }
   }
   const seen = branchChecks.get(s.id)
   let problem = seen && Date.now() - seen.at < BRANCH_CHECK_MS ? seen.problem : undefined
@@ -174,22 +179,35 @@ async function stepAction(s: FullStory, ph: FullStory["phases"][number]): Promis
 
 const addLine = (text: string, line: string) => `${text}${text && !text.endsWith("\n") ? "\n" : ""}${line}\n`
 
-/** After step_finish done: the verify commands, the changes, then done / waiting-check / blocked. */
+/** After step_finish done: the verify commands, the deploy when needed, the
+ *  changes, then done / waiting-check / blocked. Safe to run again (restart). */
 async function finishStep(stepId: string, log: Log): Promise<string> {
-  const st = await prisma.storyStep.findUniqueOrThrow({ where: { id: stepId }, include: { phase: { include: { story: true } } } })
+  const st = await prisma.storyStep.findUniqueOrThrow({ where: { id: stepId }, include: { phase: { include: { story: true, steps: true } } } })
   const story = st.phase.story
   const at = `${st.phase.number}.${st.number}`
   await prisma.storyStep.update({ where: { id: st.id }, data: { status: "verifying" } })
   log(`story ${story.number}: step ${at}: running the verify commands`)
   const v = await runVerify(story.projectId, heartbeat)
+  // Deploy (MAW runs it, never the model) before a check, after a step marked
+  // deploy, and when this is the phase's last step.
+  const last = st.phase.steps.every((x) => x.id === st.id || x.status === "done")
+  let dep: { ok: boolean; output: string } | null = null
+  if (v.ok && (st.check || st.deploy || last)) {
+    await prisma.storyStep.update({ where: { id: st.id }, data: { status: "deploying" } })
+    log(`story ${story.number}: step ${at}: running the deploy command`)
+    dep = await runDeploy(story.projectId, heartbeat)
+  }
   const diff = await projectChanges(story.projectId, heartbeat)
-  const status = !v.ok ? "blocked" : st.check ? "waiting-check" : "done"
+  const ok = v.ok && (dep?.ok ?? true)
+  const status = !ok ? "blocked" : st.check ? "waiting-check" : "done"
+  const why = !v.ok ? `MAW: the verify command failed: ${v.failed}` : dep && !dep.ok ? "MAW: the deploy command failed." : ""
   await prisma.storyStep.update({
     where: { id: st.id },
-    data: { status, verifyOutput: v.output, diff, ...(v.ok ? {} : { result: addLine(st.result, `MAW: the verify command failed: ${v.failed}`) }) },
+    data: { status, verifyOutput: v.output, diff, deployOutput: dep?.output ?? "", ...(why ? { result: addLine(st.result, why) } : {}) },
   })
-  if (!v.ok) await block(story.id)
-  const note = v.ok ? (st.check ? "verified; waiting for your check" : "verified") : `verify failed: ${v.failed}`
+  if (!ok) await block(story.id)
+  const note = !v.ok ? `verify failed: ${v.failed}` : dep && !dep.ok ? "deploy failed"
+    : `verified${dep ? " and deployed" : ""}${st.check ? "; waiting for your check" : ""}`
   log(`story ${story.number}: step ${at}: ${note}`)
   return note
 }
@@ -323,7 +341,7 @@ async function settle(job: Job, log: Log) {
   }
   if (job.kind === "step" && job.stepId) {
     const st = await prisma.storyStep.findUnique({ where: { id: job.stepId }, select: { status: true } })
-    if (st?.status === "done" || st?.status === "verifying") {
+    if (st?.status === "done" || st?.status === "verifying" || st?.status === "deploying") {
       const note = await finishStep(job.stepId, log)
       return end(job, "done", job.note ? `${job.note.slice(0, 1500)} · ${note}` : note, log)
     }
@@ -535,5 +553,35 @@ export async function markStepDone(stepId: string): Promise<R> {
   if (!f.ok) return f
   await prisma.storyStep.update({ where: { id: stepId }, data: { status: "done", result: addLine(f.st.result, "Developer marked it done.") } })
   await unblock(f.story.id)
+  return { ok: true }
+}
+
+/** The story's branch, set from the Dashboard (a story without one runs no step). */
+export async function setStoryBranch(storyId: string, branch: string): Promise<R> {
+  const b = branch.trim()
+  if (!b) return { ok: false, message: "Give the branch a name, for example story-1-tool-count." }
+  const e = checkStoryInput({ title: "x", request: "x", branch: b })
+  if (e.branch) return { ok: false, message: e.branch }
+  const r = await prisma.story.updateMany({ where: { id: storyId }, data: { branch: b, runnerNote: "" } })
+  branchChecks.delete(storyId)
+  return r.count ? { ok: true } : { ok: false, message: "This story no longer exists." }
+}
+
+/** A done step is opened again with your note: it runs again (its phase and the story too). */
+export async function reopenStep(stepId: string, note: string): Promise<R> {
+  const n = note.trim()
+  if (!n) return { ok: false, message: "Say what is wrong; the step's next session reads it." }
+  if (n.length > DIRECTION_MAX) return { ok: false, message: "Keep the note under 4,000 characters." }
+  const st = await prisma.storyStep.findUnique({ where: { id: stepId }, include: { phase: { include: { story: { include: { phases: { orderBy: { number: "asc" } } } } } } } })
+  if (!st) return { ok: false, message: "This step no longer exists." }
+  const story = st.phase.story
+  if (st.status !== "done") return { ok: false, message: "Only a done step can be reopened." }
+  if (!["in-progress", "done", "blocked", "paused"].includes(story.status)) return { ok: false, message: `The story is ${story.status}.` }
+  // The phase being worked on, or (when every phase is done) the last phase.
+  const cur = currentPhase(story) ?? story.phases.at(-1)
+  if (cur?.id !== st.phaseId) return { ok: false, message: "Only a step of the phase being worked on (or of the last phase, when the story is done) can be reopened." }
+  await prisma.storyStep.update({ where: { id: st.id }, data: { status: "pending", result: addLine(st.result, `Developer: reopened: ${n}`) } })
+  await prisma.storyPhase.update({ where: { id: st.phaseId }, data: { status: "in-progress" } })
+  if (story.status === "done") await prisma.story.update({ where: { id: story.id }, data: { status: "in-progress" } })
   return { ok: true }
 }

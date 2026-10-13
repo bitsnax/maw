@@ -18,10 +18,15 @@ export const PHASE_STATUS: Record<string, string> = {
   "in-progress": "In progress", blocked: "Blocked", done: "Done",
 }
 export const STEP_STATUS: Record<string, string> = {
-  pending: "Pending", "in-progress": "In progress", verifying: "Verifying", "waiting-check": "Waiting for your check", done: "Done", blocked: "Blocked",
+  pending: "Pending", "in-progress": "In progress", verifying: "Verifying", deploying: "Deploying", "waiting-check": "Waiting for your check", done: "Done", blocked: "Blocked",
 }
 
 export type NewStoryInput = { title: string; request: string; branch?: string }
+
+/** The branch a new story is given unless you change it: "story-3-tool-count". */
+export function defaultBranch(s: { number: number; title: string }): string {
+  return `story-${storyKey(s)}`
+}
 
 /** kebab-case of a title, for {story} and branch names: "3-tool-count". */
 export function storyKey(s: { number: number; title: string }): string {
@@ -99,13 +104,14 @@ export function progress(s: { phases: { steps: { status: string }[] }[] }) {
   return { phases: s.phases.length, steps: steps.length, done: steps.filter((x) => x.status === "done").length }
 }
 
-export async function saveProfile(projectId: string, i: { profile: string; verifyCommands: string[]; protectedBranches: string[] }) {
+export async function saveProfile(projectId: string, i: { profile: string; verifyCommands: string[]; protectedBranches: string[]; deployCommand?: string }) {
   await prisma.project.update({
     where: { id: projectId },
     data: {
       profile: i.profile.trim(),
       verifyCommands: i.verifyCommands.map((c) => c.trim()).filter(Boolean),
       protectedBranches: i.protectedBranches.map((c) => c.trim()).filter(Boolean),
+      ...(i.deployCommand !== undefined ? { deployCommand: i.deployCommand.trim() } : {}),
     },
   })
 }

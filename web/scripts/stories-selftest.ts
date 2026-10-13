@@ -149,7 +149,7 @@ async function storyTools(projectId: string) {
   const n = await tool("step_note", sj, { text: "edited a.ts: added toolCountsByConnection" })
   const fin = await tool("step_finish", sj, { status: "done", summary: "a.ts changed." })
   const st1 = await prisma.storyStep.findUniqueOrThrow({ where: { id: step.id } })
-  check("step: note then done; result keeps both", n.ok && fin.ok && st1.status === "done" && st1.result.includes("- edited a.ts") && st1.result.includes("Done: a.ts changed."), st1)
+  check("step: note then done (verifying until MAW's verify passes); result keeps both", n.ok && fin.ok && st1.status === "verifying" && st1.result.includes("- edited a.ts") && st1.result.includes("Done: a.ts changed."), st1)
   check("step_finish with another status is refused", !(await tool("step_finish", sj, { status: "maybe", summary: "x" })).ok)
   await prisma.storyJob.update({ where: { sessionId: sj }, data: { state: "done" } })
   check("an ended session's tools are refused", !(await tool("step_note", sj, { text: "late" })).ok)

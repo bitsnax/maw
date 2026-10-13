@@ -190,9 +190,11 @@ export function phaseStepsPrompt(s: FullStory, ph: Phase): string {
     "- context: the facts the step needs, copied from the findings (names, signatures, line anchors, decisions), so it does not search for them.",
     "- changes: the exact edits, numbered.",
     "- verification: anything to check beyond the project's verify commands (MAW runs those after every step).",
-    "- manualCheck and needsCheck: true only when the developer must check something by hand (in the browser, say); describe exactly what to do and what to expect.",
+    "- manualCheck and needsCheck: true only when the developer must check something by hand (in the browser, say). MAW deploys the project (its deploy command) before asking for the check, so describe only what to open and what to expect; never tell the developer to rebuild.",
+    "- needsDeploy: true when later steps need this step's result running (a schema change and its migration, a new route or service). MAW also deploys before every check and after the phase's last step.",
     "Size: a step changes 1 to 3 files and fits in one session; a schema change ships with its migration in the same step. Usually 1 to 6 steps.",
-    "You may refine the phase with phase_plan_set {\"approach\": \"…\", \"notes\": \"…\"} first. Follow every developer's answer exactly.",
+    "You may refine the phase with phase_plan_set {\"approach\": \"…\", \"notes\": \"…\"} first.",
+    "The developer's answers and directions above override the story plan and the findings. Write each one into the context and changes of every step it affects, word for word where it names code (for example a select or a query shape): a step session follows its step text, so the step text must already agree with them.",
   ].join("\n")
 }
 
@@ -215,9 +217,9 @@ export function stepPrompt(s: FullStory, ph: Phase, st: Step, stepText: string):
     `Goal: ${ph.goal.trim()}`,
     ...(ph.approach.trim() ? [`Approach: ${ph.approach.trim()}`] : []),
     ...(ph.notes.trim() ? [`Notes: ${ph.notes.trim()}`] : []),
-    ...(answers.length ? ["", "The developer's answers for this phase (follow them exactly):", ...answers] : []),
     "",
     stepText,
+    ...(answers.length ? ["", "## The developer's answers and directions for this phase", "They override the step text above wherever they differ. Follow them exactly.", ...answers] : []),
     ...(st.verifyOutput.trim() ? ["", "## The verify commands' output after the last try (fix what failed)", "```", st.verifyOutput.trim().slice(-6000), "```"] : []),
     "",
     `## Your task: carry out step ${ph.number}.${st.number}`,
@@ -225,7 +227,7 @@ export function stepPrompt(s: FullStory, ph: Phase, st: Step, stepText: string):
     "- After each change, record it with step_note {\"text\": \"file: what changed\"}, so a later session can continue if this one runs out of room.",
     "- If \"Result so far\" above has notes, an earlier session already did part of this step: check those changes are in place and continue from there. Lines starting \"Developer:\" are the developer's instructions; follow them exactly.",
     "- Do not commit or switch branches (refused); leave the changes in the working tree for the developer.",
-    "- You may run quick checks. MAW runs the project's verify commands after you finish.",
+    "- You may run quick checks. MAW runs the project's verify commands after you finish, and deploys the project when it is needed (do not run docker compose up/down/restart/build yourself; it is refused).",
     "- When the changes are made: step_finish {\"status\": \"done\", \"summary\": \"what changed, file by file\"}. If the step cannot be done as written: step_finish {\"status\": \"blocked\", \"summary\": \"why, and what would unblock it\"}. Then stop.",
   ].join("\n")
 }

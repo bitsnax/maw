@@ -1,5 +1,5 @@
 import path from "node:path"
-import { STORY_TOOL_NAMES, StoryToolError, gitWrites, handleStoryTool, jobOf, type StoryToolName } from "./story-tools"
+import { STORY_TOOL_NAMES, StoryToolError, dockerWrites, gitWrites, handleStoryTool, jobOf, type StoryToolName } from "./story-tools"
 import { timingSafeEqual } from "node:crypto"
 import { prisma } from "./prisma"
 import {
@@ -275,6 +275,11 @@ async function runBash(ctx: ToolContext, a: Args, signal: AbortSignal): Promise<
   const writes = ctx.sessionID ? gitWrites(command) : []
   if (writes.length && (await jobOf(ctx.sessionID))) {
     throw new ToolError(403, `Refused: \`git ${writes.join("`, `git ")}\` changes the repository, and in story sessions git that changes state is the developer's (branch, commit, push, merge, …). Read-only git (status, diff, log, show) is fine. Leave the change in the working tree and say what should be committed.`)
+  }
+  // Deploys are MAW's too: it runs the project's deploy command after a verified step.
+  const docker = ctx.sessionID ? dockerWrites(command) : []
+  if (docker.length && (await jobOf(ctx.sessionID))) {
+    throw new ToolError(403, `Refused: \`${docker.join("`, `")}\` changes what runs. In story sessions MAW deploys the project itself (its deploy command, after the verify commands pass). Read-only docker (ps, logs, inspect) is fine.`)
   }
   const timeoutMs = Math.min(Math.max(int(a, "timeout", 1) ?? BASH_DEFAULT_MS, 1000), BASH_MAX_MS)
   const workdir = a.workdir === undefined || a.workdir === null || a.workdir === "" ? null : mapPath(ctx, str(a, "workdir"))

@@ -2125,3 +2125,49 @@ body {
   width: 100%;
   max-width: 100%;
 }
+.story-run-where {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--text-muted-color);
+}
+.story-needed {
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: #b54708;
+  color: #fff;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+}
+.story-run.is-needed {
+  background: #fff8ee;
+  border-color: #f0b46a;
+  box-shadow: 0 0 0 2px rgba(240, 180, 106, 0.25);
+}
+.story-branch-input {
+  width: 16rem;
+  max-width: 60vw;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.82rem;
+}
+.story-dev.is-deploy {
+  background: #eef2ff;
+  color: #3b5bdb;
+}
+.ws-sound {
+  border: 1px solid var(--surface-border);
+  background: var(--surface-bg);
+  border-radius: 6px;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.ws-sound.is-on {
+  opacity: 1;
+}

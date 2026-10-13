@@ -13,7 +13,13 @@ export type StoryRow = {
   id: string; number: number; title: string; request: string; branch: string | null
   status: string; statusLabel: string; phases: number; steps: string; updated: string
 }
-type Form = { id: string | null; title: string; request: string; branch: string }
+type Form = { id: string | null; title: string; request: string; branch: string; branchTouched: boolean }
+
+/** The branch a story gets unless you change it: "story-tool-count-per-connection". */
+const branchFor = (title: string) => {
+  const k = title.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "")
+  return k ? `story-${k}` : ""
+}
 
 export default function ProjectStories({ projectId, stories }: { projectId: string; stories: StoryRow[] }) {
   const router = useRouter()
@@ -62,7 +68,7 @@ export default function ProjectStories({ projectId, stories }: { projectId: stri
                 <td className="data-nowrap">{s.updated}</td>
                 <td className="pcmd-actions-cell"><span className="pcmd-tools">
                   <button type="button" className="pcmd-tool" aria-label={`Edit story ${s.number}`}
-                    onClick={() => open({ id: s.id, title: s.title, request: s.request, branch: s.branch ?? "" })}>Edit</button>
+                    onClick={() => open({ id: s.id, title: s.title, request: s.request, branch: s.branch ?? branchFor(s.title), branchTouched: !!s.branch })}>Edit</button>
                   <button type="button" className="pcmd-tool is-danger" aria-label={`Remove story ${s.number}`} onClick={() => void remove(s)}>Remove</button>
                 </span></td>
               </tr>
@@ -70,7 +76,7 @@ export default function ProjectStories({ projectId, stories }: { projectId: stri
           </tbody>
         </table>
       )}
-      <div><button type="button" className="btn btn-small btn-primary" onClick={() => open({ id: null, title: "", request: "", branch: "" })}>New story</button></div>
+      <div><button type="button" className="btn btn-small btn-primary" onClick={() => open({ id: null, title: "", request: "", branch: "", branchTouched: false })}>New story</button></div>
       {note && <div className="form-alert">{note}</div>}
 
       <dialog ref={ref} className="pcmd-dialog pstory-dialog" onClose={() => setForm(null)}>
@@ -80,18 +86,18 @@ export default function ProjectStories({ projectId, stories }: { projectId: stri
             {err.message && !err.errors && <div className="form-alert">{err.message}</div>}
             <label className="form-label" htmlFor="st-title">Title</label>
             <input id="st-title" className="form-input" value={form.title} maxLength={120} autoFocus placeholder="Tool count per connection"
-              onChange={(e) => { setForm({ ...form, title: e.target.value }); setErr({}) }} />
+              onChange={(e) => { setForm({ ...form, title: e.target.value, branch: form.branchTouched ? form.branch : branchFor(e.target.value) }); setErr({}) }} />
             {err.errors?.title && <div className="form-error">{err.errors.title}</div>}
             <label className="form-label" htmlFor="st-request">Request</label>
             <textarea id="st-request" className="form-input" rows={10} value={form.request}
               placeholder="What to build or change, what is out of scope, and when it is done."
               onChange={(e) => { setForm({ ...form, request: e.target.value }); setErr({}) }} />
             {err.errors?.request && <div className="form-error">{err.errors.request}</div>}
-            <label className="form-label" htmlFor="st-branch">Branch (optional)</label>
+            <label className="form-label" htmlFor="st-branch">Branch</label>
             <input id="st-branch" className="form-input data-mono" value={form.branch} placeholder="story-tool-count"
-              onChange={(e) => { setForm({ ...form, branch: e.target.value }); setErr({}) }} />
+              onChange={(e) => { setForm({ ...form, branch: e.target.value, branchTouched: true }); setErr({}) }} />
             {err.errors?.branch && <div className="form-error">{err.errors.branch}</div>}
-            <p className="pcmd-help">The request is the whole brief. MAW&apos;s agent plans the story into phases, each phase into steps, and works the steps, each in its own session. The branch fills your buttons&apos; {"{branch}"}; you create it with your own button.</p>
+            <p className="pcmd-help">The request is the whole brief. MAW&apos;s agent plans the story into phases, each phase into steps, and works the steps, each in its own session. MAW changes files only on this branch: before the steps run, create it with your command button (it fills your buttons&apos; {"{branch}"}). Planning reads the project and works on any branch.</p>
             <div className="pcmd-actions">
               <button type="button" className="btn" onClick={() => setForm(null)}>Cancel</button>
               <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Saving…" : form.id ? "Save" : "Create"}</button>

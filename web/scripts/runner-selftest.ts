@@ -29,9 +29,11 @@ import { ocMessages, ocStatus, type OcMessage } from "../lib/opencode"
 import { workspacePath } from "../lib/workspace"
 import {
   ITEM_SESSIONS, approvePhases, approveSteps, checkStep, forgetBranchChecks, heartbeat, markStepDone, pauseStory, phaseAction, planPhase,
-  planningAction, replanPhases, replanSteps, resumeStory, retryStep, runnerSeen, runnerTick, stopStoryJobs,
+  planningAction, reopenStep, replanPhases, replanSteps, resumeStory, retryStep, runnerSeen, runnerTick, setStoryBranch, stopStoryJobs,
 } from "../lib/story-runner"
 import { runOnMachine } from "../lib/story-steps"
+import { toneFor, type StoryAlert } from "../lib/alert-tones"
+import { storyAlerts } from "../lib/alerts"
 import { checklistPrompt } from "../lib/story-prompts"
 
 let failed = 0
@@ -233,9 +235,12 @@ async function phases(projectId: string, slug: string, id: string) {
   check("Approve steps: phase 1 in progress", (await approveSteps(p1.id)).ok && (await ph(p1.id)) === "in-progress")
   check("Approve steps twice: refused", !(await approveSteps(p1.id)).ok)
   // The test folder may sit inside a git checkout (on .201 it is under /opt/maw, on main):
-  // no story branch and no protected branches here, so the branch check lets the step start.
+  // no protected branches here, so the branch check lets the step start.
   // The branch check itself is tested in steps().
-  await prisma.story.update({ where: { id }, data: { branch: null } })
+  // The story's branch is whatever the folder is on (or any name when it is no git project).
+  const pr = await prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { machine: true } })
+  const on = await runOnMachine(pr.machine, pr.root, "git rev-parse --abbrev-ref HEAD", 30)
+  await prisma.story.update({ where: { id }, data: { branch: on.ok ? on.text.trim().split("\n").at(-1)! : "story-tool-count" } })
   await saveProfile(projectId, { profile: "Uses Prisma 7.", verifyCommands: ["true"], protectedBranches: [] })
   forgetBranchChecks()
   check("approved steps: the runner starts step 1.1", (await runnerTick(log, projectId)) === "started")
@@ -260,7 +265,7 @@ async function steps(projectId: string, slug: string, root: string) {
   const sh = (c: string) => runOnMachine(p.machine, root, c, 60)
   const g = await sh("git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && git rev-parse --abbrev-ref HEAD")
   check("a git repository on main in the test folder", g.ok && g.text.trim().endsWith("main"), g)
-  await saveProfile(projectId, { profile: "Uses Prisma 7.", verifyCommands: ["test -f step-a.txt", "! grep -q BROKEN step-c.txt 2>/dev/null"], protectedBranches: ["main"] })
+  await saveProfile(projectId, { profile: "Uses Prisma 7.", verifyCommands: ["test -f step-a.txt", "! grep -q BROKEN step-c.txt 2>/dev/null"], protectedBranches: ["main"], deployCommand: "echo deployed >> deploys.txt" })
   const st = await createStory(projectId, null, { title: "Steps", request: "Carry out the steps.", branch: "story-x" })
   if (!st.ok) { check("story", false, st); return }
   const id = st.story.id
@@ -269,6 +274,7 @@ async function steps(projectId: string, slug: string, root: string) {
   await prisma.story.update({ where: { id }, data: {
     status: "in-progress", overview: "Four small steps.", notes: "Keep it small.",
     request: ["Carry out the steps.",
+      cue("1.1", "bash", { command: "docker compose up -d --build", timeout: 60000 }),
       cue("1.1", "write", { filePath: "step-a.txt", content: "a\n" }), cue("1.1", "step_note", { text: "step-a.txt: written" }), cue("1.1", "step_finish", { status: "done", summary: "wrote step-a.txt" }),
       cue("1.2", "write", { filePath: "step-b.txt", content: "b\n" }), cue("1.2", "step_finish", { status: "done", summary: "wrote step-b.txt" }),
       cue("1.3", "write", { filePath: "step-c.txt", content: "BROKEN\n" }), cue("1.3", "write", { filePath: "step-c.txt", content: "fine\n" }, "Developer: fix it"),
@@ -276,11 +282,16 @@ async function steps(projectId: string, slug: string, root: string) {
       cue("1.4", "step_finish", { status: "blocked", summary: "needs a key only you have" }),
     ].join("\n") } })
   const ph = await prisma.storyPhase.create({ data: { storyId: id, number: 1, title: "Do it", goal: "Four files.", status: "in-progress" } })
-  const mk = (n: number, title: string, check = false) => prisma.storyStep.create({ data: { phaseId: ph.id, number: n, title, goal: title, changes: `1. ${title}.`, check, manualCheck: check ? "Look at step-b.txt." : "" } })
-  const s1 = await mk(1, "Write a"), s2 = await mk(2, "Write b", true), s3 = await mk(3, "Write c"), s4 = await mk(4, "Needs a key")
+  const mk = (n: number, title: string, check = false, deploy = false) => prisma.storyStep.create({ data: { phaseId: ph.id, number: n, title, goal: title, changes: `1. ${title}.`, check, deploy, manualCheck: check ? "Look at step-b.txt." : "" } })
+  const s1 = await mk(1, "Write a"), s2 = await mk(2, "Write b", true), s3 = await mk(3, "Write c", false, true), s4 = await mk(4, "Needs a key")
+  await prisma.storyItem.create({ data: { storyId: id, phaseId: ph.id, position: 1, text: "Your direction for phase 1's steps", developer: true, answer: "Use small files.", checked: true } })
   const step = (sid: string) => prisma.storyStep.findUniqueOrThrow({ where: { id: sid } })
   const sjobs = async (sid: string) => prisma.storyJob.findMany({ where: { stepId: sid }, orderBy: { createdAt: "asc" } })
 
+  await prisma.story.update({ where: { id }, data: { branch: null } })
+  check("no branch: the runner waits and asks for one", (await runnerTick(log, projectId)) === "idle" && (await prisma.story.findUniqueOrThrow({ where: { id } })).runnerNote.includes("has no branch"))
+  check("a bad branch name is refused", !(await setStoryBranch(id, "bad branch")).ok)
+  check("the branch set from the Dashboard", (await setStoryBranch(id, "story-x")).ok && (await prisma.story.findUniqueOrThrow({ where: { id } })).runnerNote === "")
   forgetBranchChecks()
   check("on main (protected): the runner waits and says why", (await runnerTick(log, projectId)) === "idle" && (await prisma.story.findUniqueOrThrow({ where: { id } })).runnerNote.includes("main, a protected branch"))
   await sh("git checkout -q -b story-x")
@@ -297,6 +308,10 @@ async function steps(projectId: string, slug: string, root: string) {
   check("…one session, titled, its job done and verified", j1.length === 1 && j1[0]!.state === "done" && j1[0]!.note.includes("verified") && (await prisma.projectSession.findUnique({ where: { id: j1[0]!.sessionId } }))?.title === `Story ${N} · step 1.1`, j1)
   const m1 = await ocMessages(workspacePath(slug), j1[0]!.sessionId)
   const p1 = m1.ok ? userText(m1.data) : ""
+  const dk = m1.ok ? m1.data.flatMap((m) => m.parts).find((x) => x.type === "tool" && x.tool === "bash") : undefined
+  check("docker compose up in a step session: refused, nothing run", dk?.state?.status === "error" && (dk.state.error ?? "").includes("MAW deploys the project itself"), dk?.state)
+  check("step prompt: your direction after the step text, as overriding it", p1.indexOf("# Step 1.1: Write a") < p1.indexOf("They override the step text") && p1.includes("Use small files."))
+  check("a step that is neither checked, marked deploy, nor the phase's last: no deploy", a.deployOutput === "")
   check("step prompt: the story plan, the phase, the step, the task", p1.startsWith(`Session: step, story ${N}, step 1.1.`) && p1.includes("Four small steps.") && p1.includes("# Step 1.1: Write a") && p1.includes("Your task: carry out step 1.1") && !p1.includes("This is planning"), p1.slice(0, 300))
   check("no word in the step prompt sets off the mock's other cues", !/\bask\b|sleep|slow|git status/.test(p1.replace(/^WHEN .*$/gm, "")))
 
@@ -307,6 +322,7 @@ async function steps(projectId: string, slug: string, root: string) {
   const j2 = await sjobs(s2.id)
   const m2 = j2[1] ? await ocMessages(workspacePath(slug), j2[1].sessionId) : null
   check("…its second session reads your note", j2.length === 2 && m2?.ok === true && userText(m2.data).includes("Developer: not right: use B"))
+  check("a step with a check: MAW deployed before asking", (await step(s2.id)).deployOutput.includes("$ echo deployed >> deploys.txt") && (await step(s2.id)).deployOutput.includes("→ exit 0"))
   check("Checked: step 1.2 done", (await checkStep(s2.id, true, "")).ok && (await step(s2.id)).status === "done")
 
   await turn(projectId, async () => (await status(id)) !== "in-progress", 120_000)
@@ -318,6 +334,7 @@ async function steps(projectId: string, slug: string, root: string) {
   c = await step(s3.id)
   const j3 = await sjobs(s3.id)
   const m3 = j3[1] ? await ocMessages(workspacePath(slug), j3[1].sessionId) : null
+  check("a step marked deploy: deployed after its verify", c.status === "done" && c.deployOutput.includes("echo deployed"))
   check("…the second session reads the verify output and your direction, and fixes it", c.status === "done" && m3?.ok === true && userText(m3.data).includes("fix what failed") && userText(m3.data).includes("Developer: fix it"), c.status)
 
   await turn(projectId, async () => (await status(id)) !== "in-progress", 120_000)
@@ -328,9 +345,45 @@ async function steps(projectId: string, slug: string, root: string) {
   await runnerTick(log, projectId)
   check("every step done → the phase is done → the story is done", (await prisma.storyPhase.findUniqueOrThrow({ where: { id: ph.id } })).status === "done" && (await status(id)) === "done")
   check("the runner leaves a done story alone", (await runnerTick(log, projectId)) === "idle")
+
+  console.log("reopen a done step")
+  const before = await storyAlerts()
+  check("Reopen without a note: refused", !(await reopenStep(s1.id, "")).ok)
+  check("Reopen step 1.1 with a note: step pending, phase and story in progress", (await reopenStep(s1.id, "write a twice")).ok && (await step(s1.id)).status === "pending" && (await status(id)) === "in-progress")
+  await turn(projectId, async () => (await status(id)) === "done", 120_000)
+  const r1 = await step(s1.id)
+  const j1b = await sjobs(s1.id)
+  const m1b = j1b.at(-1) ? await ocMessages(workspacePath(slug), j1b.at(-1)!.sessionId) : null
+  check("…it ran again with your note and, being the phase's last open step, deployed; the story is done again", r1.status === "done" && r1.deployOutput.includes("echo deployed") && m1b?.ok === true && userText(m1b.data).includes("Developer: reopened: write a twice") && (await status(id)) === "done", { st: r1.status, d: r1.deployOutput.slice(0, 80) })
+  const dep = await sh("wc -l < deploys.txt")
+  check("deploys ran on the machine, in the project (step 1.2, 1.3 twice?, 1.1 again)", dep.ok && Number(dep.text.trim()) >= 3, dep.text)
+  const after = await storyAlerts()
+  check("the alerts digest lists the story, done", after.some((x) => x.id === id && x.status === "done") && before.some((x) => x.id === id))
+}
+
+function tones() {
+  console.log("sounds: which tone for which change")
+  const a = (o: Partial<StoryAlert>): StoryAlert => ({ id: "s", project: "p", number: 1, title: "t", status: "in-progress", checks: 0, items: 0, approvals: 0, note: "", ...o })
+  const none = { before: new Map<string, string>(), after: new Map<string, string>() }
+  check("story done → finished", toneFor([a({})], [a({ status: "done" })], none) === "finished")
+  check("story blocked → error", toneFor([a({})], [a({ status: "blocked" })], none) === "error")
+  check("a step waits for your check → question", toneFor([a({})], [a({ checks: 1 })], none) === "question")
+  check("an item for you → question", toneFor([a({ status: "planning" })], [a({ status: "planning", items: 1 })], none) === "question")
+  check("phases ready → stopped", toneFor([a({ status: "planning" })], [a({ status: "phases-ready" })], none) === "stopped")
+  check("steps ready / phase to plan → stopped", toneFor([a({})], [a({ approvals: 1 })], none) === "stopped")
+  check("a branch to make → stopped", toneFor([a({})], [a({ note: "no branch" })], none) === "stopped")
+  check("nothing changed, or you approved → no sound", toneFor([a({})], [a({})], none) === null && toneFor([a({ status: "phases-ready" })], [a({})], none) === null)
+  check("a new story → no sound", toneFor([], [a({})], none) === null)
+  check("error wins over the rest", toneFor([a({}), a({ id: "x" })], [a({ status: "done" }), a({ id: "x", status: "blocked" })], none) === "error")
+  const ses = (b: [string, string][], f: [string, string][]) => ({ before: new Map(b), after: new Map(f) })
+  check("your session's turn ends → stopped", toneFor([], [], ses([["a", "working"]], [])) === "stopped")
+  check("your session asks → question", toneFor([], [], ses([["a", "working"]], [["a", "waiting"]])) === "question")
+  check("your session's model fails (retry) → error", toneFor([], [], ses([["a", "working"]], [["a", "retry"]])) === "error")
+  check("answering a question: no sound", toneFor([], [], ses([["a", "waiting"]], [["a", "working"]])) === null)
 }
 
 async function main() {
+  tones()
   const [machineId, root] = process.argv.slice(2)
   if (!machineId || !root) throw new Error("usage: runner-selftest.ts <machine id> <root>")
   heartbeat()

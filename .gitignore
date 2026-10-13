@@ -27,3 +27,7 @@ traefik/certs/*.pem
 *~
 .DS_Store
 Thumbs.db
+
+# The Dashboard's notification sounds: your own files, copied in by the
+# phase scripts from ~/maw-1/sounds (kept out of git; the image build includes them)
+web/public/sounds/*.wav

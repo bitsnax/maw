@@ -11,6 +11,7 @@ import {
 import { Message, QuestionCard, turnFooter } from "./conversation"
 import { useSession } from "./useSession"
 import StoryView from "./StoryView"
+import { useSounds } from "./sounds"
 import type { RunLine, RunView } from "@/lib/command-runs"
 import type { CommandStatus, OutputLine } from "@/lib/machines"
 
@@ -57,6 +58,7 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const sess = useSession(sessionId)
+  const sound = useSounds(snap)
   const outRef = useRef<HTMLDivElement | null>(null)
   const stick = useRef(true)
   const askRef = useRef<HTMLDialogElement | null>(null)
@@ -250,6 +252,11 @@ export default function Workspace({ initial, initialSession, initialStory }: { i
           ))}
         </div>
         <div className="ws-state">
+          <button type="button" className={`ws-sound${sound.on ? " is-on" : ""}`} onClick={sound.toggle}
+            title={sound.on ? "Sounds on: a tone when a story or session needs you, fails or finishes. Click to turn off." : "Sounds off. Click to turn on."}
+            aria-label={sound.on ? "Turn sounds off" : "Turn sounds on"} aria-pressed={sound.on}>
+            {sound.on ? "🔔" : "🔕"}
+          </button>
           {elsewhereCount > 0 && (
             <details className="ws-elsewhere">
               <summary>{elsewhereCount} active elsewhere</summary>

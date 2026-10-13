@@ -8,13 +8,15 @@ import {
   type NewStoryInput,
 } from "@/lib/stories"
 import {
-  JOB_LABEL, approvePhases, approveSteps, checkStep, markStepDone, pauseStory, planPhase, replanPhases, replanSteps, resumeStory, retryStep,
-  runnerSeen, stopStoryJobs,
+  JOB_LABEL, approvePhases, approveSteps, checkStep, markStepDone, pauseStory, planPhase, reopenStep, replanPhases, replanSteps, resumeStory, retryStep,
+  runnerSeen, setStoryBranch, stopStoryJobs,
 } from "@/lib/story-runner"
 import { liveStates } from "@/lib/session-status"
 
 // Stories (admin only, like Projects). Every action checks the admin itself;
 // none throws to the browser.
+
+const BRANCH_NEEDED = "MAW changes files only on the story's own branch; give it one (you create it with your command button)."
 
 type Reply<T> = { ok: true; data: T } | { ok: false; message: string; errors?: Record<string, string> }
 
@@ -41,7 +43,7 @@ export type StoryView = {
     steps: {
       id: string; number: number; title: string; files: string; check: boolean; status: string; statusLabel: string
       goal: string; readBudget: string; context: string; changes: string; verification: string
-      manualCheck: string; result: string; verifyOutput: string; diff: string
+      manualCheck: string; result: string; verifyOutput: string; diff: string; deploy: boolean; deployOutput: string
     }[]
   }[]
 }
@@ -91,7 +93,7 @@ export async function storyView(id: string): Promise<Reply<StoryView>> {
         steps: p.steps.map((x) => ({
           id: x.id, number: x.number, title: x.title, files: x.files, check: x.check, status: x.status, statusLabel: STEP_STATUS[x.status] ?? x.status,
           goal: x.goal, readBudget: x.readBudget, context: x.context, changes: x.changes, verification: x.verification,
-          manualCheck: x.manualCheck, result: x.result, verifyOutput: x.verifyOutput, diff: x.diff,
+          manualCheck: x.manualCheck, result: x.result, verifyOutput: x.verifyOutput, diff: x.diff, deploy: x.deploy, deployOutput: x.deployOutput,
         })),
       })),
     },
@@ -102,6 +104,7 @@ export async function newStory(projectId: string, input: NewStoryInput): Promise
   const a = await adminSession()
   if (!a) return { ok: false, message: "Only an admin can write stories." }
   if (!(await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } }))) return { ok: false, message: "This project no longer exists." }
+  if (!input.branch?.trim()) return { ok: false, message: "Check the fields below.", errors: { branch: BRANCH_NEEDED } }
   const r = await createStory(projectId, a.user.id, input)
   if (!r.ok) return { ok: false, message: "Check the fields below.", errors: r.errors }
   revalidatePath(`/projects/${projectId}`)
@@ -111,6 +114,7 @@ export async function newStory(projectId: string, input: NewStoryInput): Promise
 export async function editStory(id: string, input: NewStoryInput): Promise<Reply<null>> {
   if (!(await adminSession())) return { ok: false, message: "Only an admin can change stories." }
   const s = await prisma.story.findUnique({ where: { id }, select: { projectId: true } })
+  if (!input.branch?.trim()) return { ok: false, message: "Check the fields below.", errors: { branch: BRANCH_NEEDED } }
   const r = await updateStory(id, input)
   if (!r.ok) return { ok: false, message: r.message ?? "Check the fields below.", errors: r.errors }
   if (s) revalidatePath(`/projects/${s.projectId}`)
@@ -156,20 +160,28 @@ export async function phaseControl(phaseId: string, act: "plan-steps" | "approve
 
 /** A step, from the Dashboard: your manual check (right / not right with a
  *  note), run a blocked step again (with a direction), or mark it done. */
-export async function stepControl(stepId: string, act: "checked" | "not-right" | "retry" | "mark-done", text = ""): Promise<Reply<null>> {
+export async function stepControl(stepId: string, act: "checked" | "not-right" | "retry" | "mark-done" | "reopen", text = ""): Promise<Reply<null>> {
   if (!(await adminSession())) return { ok: false, message: "Only an admin can do that." }
   const r = act === "checked" ? await checkStep(stepId, true, text) : act === "not-right" ? await checkStep(stepId, false, text)
-    : act === "retry" ? await retryStep(stepId, text) : act === "mark-done" ? await markStepDone(stepId)
+    : act === "retry" ? await retryStep(stepId, text) : act === "mark-done" ? await markStepDone(stepId) : act === "reopen" ? await reopenStep(stepId, text)
     : { ok: false as const, message: "Unknown action." }
   return r.ok ? { ok: true, data: null } : r
 }
 
-export async function saveProjectProfile(projectId: string, input: { profile: string; verifyCommands: string; protectedBranches: string }): Promise<Reply<null>> {
+/** The story's branch, from the Dashboard's bar. */
+export async function saveStoryBranch(storyId: string, branch: string): Promise<Reply<null>> {
+  if (!(await adminSession())) return { ok: false, message: "Only an admin can change stories." }
+  const r = await setStoryBranch(storyId, branch)
+  return r.ok ? { ok: true, data: null } : r
+}
+
+export async function saveProjectProfile(projectId: string, input: { profile: string; verifyCommands: string; protectedBranches: string; deployCommand: string }): Promise<Reply<null>> {
   if (!(await adminSession())) return { ok: false, message: "Only an admin can change the profile." }
   await saveProfile(projectId, {
     profile: input.profile,
     verifyCommands: input.verifyCommands.split("\n"),
     protectedBranches: input.protectedBranches.split(/[,\s]+/),
+    deployCommand: input.deployCommand,
   })
   revalidatePath(`/projects/${projectId}`)
   return { ok: true, data: null }

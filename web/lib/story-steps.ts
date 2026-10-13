@@ -31,7 +31,7 @@ export async function runOnMachine(m: MachineRecord, root: string, command: stri
   }
 }
 
-type ProjectRow = { root: string; verifyCommands: string[]; protectedBranches: string[]; machine: MachineRecord }
+type ProjectRow = { root: string; verifyCommands: string[]; protectedBranches: string[]; deployCommand: string; machine: MachineRecord }
 
 function projectOf(projectId: string): Promise<ProjectRow> {
   return prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { machine: true } })
@@ -49,6 +49,14 @@ export async function runVerify(projectId: string, tick?: () => void): Promise<{
     if (!r.ok) return { ok: false, output: parts.join("\n\n").slice(-20_000), failed: c }
   }
   return { ok: true, output: p.verifyCommands.length ? parts.join("\n\n").slice(-20_000) : "(the project has no verify commands)", failed: null }
+}
+
+/** The project's deploy command (one command, up to 30 minutes), or null when it has none. */
+export async function runDeploy(projectId: string, tick?: () => void): Promise<{ ok: boolean; output: string } | null> {
+  const p = await projectOf(projectId)
+  if (!p.deployCommand.trim()) return null
+  const r = await runOnMachine(p.machine, p.root, p.deployCommand, 1800, tick, 200)
+  return { ok: r.ok, output: `$ ${p.deployCommand}\n${r.text.trim()}\n→ ${r.state === "exited" ? `exit ${r.exitCode}` : r.state} in ${secs(r.ms)}`.slice(-20_000) }
 }
 
 /** git status and diff of the project now (what is not committed), capped. */

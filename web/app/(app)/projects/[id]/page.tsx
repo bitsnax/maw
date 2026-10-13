@@ -94,7 +94,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       )}
 
       <h2 className="section-title">Project profile</h2>
-      <ProjectProfile projectId={project.id} profile={project.profile} verifyCommands={project.verifyCommands} protectedBranches={project.protectedBranches} />
+      <ProjectProfile projectId={project.id} profile={project.profile} verifyCommands={project.verifyCommands} protectedBranches={project.protectedBranches} deployCommand={project.deployCommand} />
 
       <h2 className="section-title">Project settings</h2>
       <ProjectSettings projectId={project.id} name={project.name} machineName={project.machine.name} root={project.root} />
