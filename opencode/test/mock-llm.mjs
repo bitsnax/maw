@@ -32,13 +32,17 @@ http.createServer((req, res) => {
     const msgs = body.messages ?? []
     res.writeHead(200, { "content-type": "text/event-stream" })
     const send = (o) => res.write(`data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", created: 1, model: "mock-27b", ...o })}\n\n`)
+    // Token use like llama.cpp reports it (MAW keeps it per session): about 4 characters a token.
+    const usage = () => send({ choices: [], usage: { prompt_tokens: Math.ceil(b.length / 4), completion_tokens: 12, total_tokens: Math.ceil(b.length / 4) + 12 } })
     const say = (text) => {
       send({ choices: [{ index: 0, delta: { role: "assistant", content: text }, finish_reason: null }] })
       send({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })
+      usage()
     }
     const callTool = (name, args) => {
       send({ choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: `call_${Date.now()}`, type: "function", function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: null }] })
       send({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })
+      usage()
     }
     if (!(body.tools ?? []).length) say("MAW check")
     else {

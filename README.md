@@ -218,6 +218,12 @@ What MAW does, and where it stops for you:
   phase: MAW goes on, and once no other step is left to run, the phase's
   checks wait for you together (the last step deploys first). Items only
   you can answer, checks and blocks always stop.
+- **Time and tokens**: each session MAW runs keeps its token use (read from
+  OpenCode when it ends: the context at its end, of 65,536, and the tokens
+  generated). The sidebar shows the task's time in sessions (a step's
+  verify and deploy included) and tokens, each phase's and step's time,
+  and about how long the current phase still needs (its steps still to run
+  at the task's average step time).
 
 - **Deploys are MAW's**, never the model's: after the verify commands pass,
   before any check, after a step the planner marked *deploy* (a schema

@@ -41,6 +41,7 @@ import { runOnMachine } from "../lib/task-steps"
 import { toneFor, type TaskAlert } from "../lib/alert-tones"
 import { taskAlerts } from "../lib/alerts"
 import { checklistPrompt } from "../lib/task-prompts"
+import { taskUsage } from "../lib/task-usage"
 
 let failed = 0
 function check(name: string, ok: boolean, detail?: unknown) {
@@ -331,6 +332,13 @@ async function steps(projectId: string, slug: string, root: string) {
   check("no word in the step prompt sets off the mock's other cues", !/\bask\b|sleep|slow|git status/.test(p1.replace(/^WHEN .*$/gm, "")))
 
   check("step 1.2 (Check) waits for your check after its verify", (await step(s2.id)).status === "waiting-check" && (await runnerTick(log, projectId)) === "idle")
+  const j1t = await sjobs(s1.id)
+  check("each session's token use is kept: the context at its end and the tokens generated", j1t.every((j) => j.contextTokens > 0 && j.outputTokens > 0), j1t.map((j) => [j.contextTokens, j.outputTokens]))
+  const u1 = await taskUsage((await getTask(id))!)
+  const us1 = u1.step(s1.id)
+  check("time and tokens per step: step 1.1's two sessions, their time (verify included) and tokens", us1.sessions === 2 && us1.ms > 0 && us1.tokens === j1t[0]!.outputTokens + j1t[1]!.outputTokens, us1)
+  check("…per phase and task (the phase's steps so far), and the time left in the phase: steps 1.3 and 1.4 at the task's pace",
+    u1.phase(ph.id).sessions === 3 && u1.task.sessions === 3 && u1.task.tokens === u1.phase(ph.id).tokens && u1.leftMs !== null && u1.leftMs > 0, { p: u1.phase(ph.id), t: u1.task, left: u1.leftMs })
   check("Not right without a note: refused", !(await checkStep(s2.id, false, "")).ok)
   check("Not right, with a note: the step runs again", (await checkStep(s2.id, false, "use B")).ok && (await step(s2.id)).status === "pending")
   await turn(projectId, async () => (await step(s2.id)).status === "waiting-check", 120_000)

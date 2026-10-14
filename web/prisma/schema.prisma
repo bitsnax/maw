@@ -424,6 +424,10 @@ model TaskJob {
   note      String      @default("")
   createdAt DateTime    @default(now())
   endedAt   DateTime?
+  // what the session used, read from OpenCode when it ends: the context at its
+  // end (of 65,536), and the tokens the model generated over the session
+  contextTokens Int     @default(0)
+  outputTokens  Int     @default(0)
 
   @@index([taskId, createdAt])
   @@map("story_job")

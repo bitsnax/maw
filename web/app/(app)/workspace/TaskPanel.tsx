@@ -31,6 +31,14 @@ const took = (a: string, b: string | null, now: number) => {
   return sec < 60 ? `${sec} s` : sec < 3600 ? `${Math.floor(sec / 60)} min ${sec % 60} s` : `${Math.floor(sec / 3600)} h ${Math.floor((sec % 3600) / 60)} min`
 }
 
+/** 45 s · 12 min · 1 h 05 min */
+const dur = (ms: number) => {
+  const sec = Math.round(ms / 1000)
+  return sec < 60 ? `${sec} s` : sec < 3600 ? `${Math.round(sec / 60)} min` : `${Math.floor(sec / 3600)} h ${String(Math.round((sec % 3600) / 60)).padStart(2, "0")} min`
+}
+/** 950 · 8.2k · 1.4M */
+const tok = (n: number) => (n < 1000 ? String(n) : n < 1_000_000 ? `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k` : `${(n / 1_000_000).toFixed(1)}M`)
+
 export type ContextUse = { tokens: number; limit: number } | null
 
 export function ContextMeter({ use }: { use: ContextUse }) {
@@ -245,6 +253,12 @@ export default function TaskPanel({ taskId, shownSession, onOpenSession, onAuto,
         {s.branch && <span className="data-mono side-branch" title="The task's branch">{s.branch}</span>}
       </div>
       {s.phases.length > 0 && <div className="side-progress">{done} of {allSteps.length} steps done{held > 0 && s.checksAtEnd ? ` · ${held} check${held === 1 ? "" : "s"} held to the phase end` : ""}</div>}
+      {s.use.sessions > 0 && (
+        <div className="side-use" title={`${s.use.sessions} session${s.use.sessions === 1 ? "" : "s"}; time counts each session from its start to its end (a step's verify and deploy included)`}>
+          {dur(s.use.ms)} in sessions · {tok(s.use.tokens)} tokens generated
+          {s.leftMs !== null && cur && <> · about <strong>{dur(s.leftMs)}</strong> left in phase {cur.number}</>}
+        </div>
+      )}
 
       {action && (
         <div className={`side-act${needed ? " is-needed" : ""}${s.status === "blocked" ? " is-blocked" : ""}`} role="status">
@@ -266,12 +280,15 @@ export default function TaskPanel({ taskId, shownSession, onOpenSession, onAuto,
           {s.phases.map((p) => (
             <div key={p.id} className={`side-phase${p.id === cur?.id ? " is-current" : ""}`}>
               <button type="button" className="side-row" onClick={() => setOpen({ kind: "phase", id: p.id })}>
-                <span className="side-n">{p.number}</span><span className="side-label">{p.title}</span><span className={`side-dot is-${p.status}`} title={p.statusLabel} />
+                <span className="side-n">{p.number}</span><span className="side-label">{p.title}</span>
+                {p.use.sessions > 0 && <span className="side-time">{dur(p.use.ms)}</span>}
+                <span className={`side-dot is-${p.status}`} title={p.statusLabel} />
               </button>
               {p.steps.map((x) => (
                 <button key={x.id} type="button" className={`side-row side-step${x.id === step?.id ? " is-current" : ""}`} onClick={() => setOpen({ kind: "step", id: x.id })}>
                   <span className="side-n">{p.number}.{x.number}</span><span className="side-label">{x.title}</span>
                   {x.check && <span className="side-tag" title="Needs your check">check</span>}
+                  {x.use.sessions > 0 && <span className="side-time" title={`${x.use.sessions} session${x.use.sessions === 1 ? "" : "s"} · ${tok(x.use.tokens)} tokens generated`}>{dur(x.use.ms)}</span>}
                   <span className={`side-dot is-${x.status}`} title={x.statusLabel} />
                 </button>
               ))}
@@ -285,7 +302,8 @@ export default function TaskPanel({ taskId, shownSession, onOpenSession, onAuto,
           <div className="side-h">Sessions <span className="side-count">{s.jobs.length}</span></div>
           <div className="side-jobs">
             {s.jobs.map((j) => (
-              <button key={j.id} type="button" disabled={!j.session} title={j.note || undefined}
+              <button key={j.id} type="button" disabled={!j.session}
+                title={[j.note, j.endedAt && (j.contextTokens || j.outputTokens) ? `Context at the end: ${tok(j.contextTokens)} of 65,536 · ${tok(j.outputTokens)} tokens generated` : ""].filter(Boolean).join("\n") || undefined}
                 className={`side-row side-job${j.sessionId === shownSession ? " is-shown" : ""}`} onClick={() => onOpenSession(j.sessionId)}>
                 <span className={`side-dot is-${j.state}`} title={JOB_STATE[j.state] ?? j.state} />
                 <span className="side-label">{j.label}</span>
@@ -355,6 +373,7 @@ function StepBody({ p, x, canReopen, onReopen }: { p: Phase; x: Step; canReopen:
       {x.check && <span className="side-tag">needs your check</span>}
       {x.deploy && <span className="side-tag">deploys</span>}
       {x.files && <span className="data-mono">{x.files}</span>}
+      {x.use.sessions > 0 && <span className="modal-use">{dur(x.use.ms)} · {x.use.sessions} session{x.use.sessions === 1 ? "" : "s"} · {tok(x.use.tokens)} tokens generated</span>}
       {canReopen && <button type="button" className="btn btn-small" onClick={onReopen}>Reopen…</button>}
     </div>
     <Sections list={[["Goal", x.goal], ["Read budget", x.readBudget], ["Context", x.context], ["Changes", x.changes], ["Verification", x.verification], ["Manual check", x.manualCheck], ["Result", x.result]]} />

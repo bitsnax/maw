@@ -12,6 +12,7 @@ import {
   runnerSeen, setTaskBranch, stopTaskJobs,
 } from "@/lib/task-runner"
 import { liveStates } from "@/lib/session-status"
+import { taskUsage, type Use } from "@/lib/task-usage"
 
 // Tasks (admin only, like Projects). Every action checks the admin itself;
 // none throws to the browser.
@@ -39,14 +40,20 @@ export type TaskView = {
   now: { job: Job; activity: string } | null
   /** Seconds since the runner last went round its loop (null: never seen). */
   runnerAge: number | null
+  /** The whole task's sessions (planning included). */
+  use: Use
+  /** Rough time left in the current phase (its steps still to run × the task's average step), or null. */
+  leftMs: number | null
   phases: {
     id: string; number: number; title: string; goal: string; approach: string; notes: string; status: string; statusLabel: string
+    /** The phase's sessions: its planning and its steps. */
+    use: Use
     items: Item[]; findings: Finding[]
     steps: {
       id: string; number: number; title: string; files: string; check: boolean; status: string; statusLabel: string
       goal: string; readBudget: string; context: string; changes: string; verification: string
       manualCheck: string; result: string; verifyOutput: string; diff: string; deploy: boolean; deployOutput: string
-      repairs: number; repairReason: string
+      repairs: number; repairReason: string; use: Use
     }[]
   }[]
 }
@@ -54,7 +61,10 @@ export type TaskView = {
 export type Job = {
   id: string; label: string; state: string; note: string; sessionId: string; session: boolean
   createdAt: string; endedAt: string | null
+  /** The context at the session's end (of 65,536), and the tokens it generated (0 until it ends). */
+  contextTokens: number; outputTokens: number
 }
+
 
 const f = (x: { id: string; heading: string; body: string }): Finding => ({ id: x.id, heading: x.heading, body: x.body })
 const item = (q: { id: string; text: string; checked: boolean; developer: boolean; answer: string | null; findings: Finding[] }): Item =>
@@ -73,7 +83,9 @@ export async function taskView(id: string): Promise<Reply<TaskView>> {
     id: j.id, state: j.state, note: j.note, sessionId: j.sessionId, session: sessions.has(j.sessionId),
     label: `${JOB_LABEL[j.kind] ?? j.kind}${j.item ? ` ${j.phase ? `${j.phase.number}.` : ""}${j.item.position}` : j.step && j.phase ? ` ${j.phase.number}.${j.step.number}` : j.phase ? ` (phase ${j.phase.number})` : ""}`,
     createdAt: j.createdAt.toISOString(), endedAt: j.endedAt?.toISOString() ?? null,
+    contextTokens: j.contextTokens, outputTokens: j.outputTokens,
   }))
+  const u = await taskUsage(s)
   const running = jobs.find((j) => j.state === "running") ?? null
   let now: TaskView["now"] = null
   if (running) {
@@ -89,15 +101,16 @@ export async function taskView(id: string): Promise<Reply<TaskView>> {
       overview: s.overview, outOfScope: s.outOfScope, notes: s.notes,
       items: s.items.map(item), findings: s.findings.map(f),
       jobs, now, runnerAge: seen ? Math.max(0, Math.round((Date.now() - seen.getTime()) / 1000)) : null,
+      use: u.task, leftMs: u.leftMs,
       phases: s.phases.map((p) => ({
         id: p.id, number: p.number, title: p.title, goal: p.goal, approach: p.approach, notes: p.notes,
-        status: p.status, statusLabel: PHASE_STATUS[p.status] ?? p.status,
+        status: p.status, statusLabel: PHASE_STATUS[p.status] ?? p.status, use: u.phase(p.id),
         items: p.items.map(item), findings: p.findings.map(f),
         steps: p.steps.map((x) => ({
           id: x.id, number: x.number, title: x.title, files: x.files, check: x.check, status: x.status, statusLabel: STEP_STATUS[x.status] ?? x.status,
           goal: x.goal, readBudget: x.readBudget, context: x.context, changes: x.changes, verification: x.verification,
           manualCheck: x.manualCheck, result: x.result, verifyOutput: x.verifyOutput, diff: x.diff, deploy: x.deploy, deployOutput: x.deployOutput,
-          repairs: x.repairs, repairReason: x.repairReason,
+          repairs: x.repairs, repairReason: x.repairReason, use: u.step(x.id),
         })),
       })),
     },

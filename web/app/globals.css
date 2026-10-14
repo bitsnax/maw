@@ -2761,3 +2761,9 @@ a {
 .side-act-held { color: var(--warn); font-size: 0.85rem; }
 .side-approve .form-input { font-size: 0.85rem; }
 .side-approve { min-width: 0; max-width: 100%; }
+/* Time and tokens (task sidebar, step modal) */
+.side-use { font-size: 0.8rem; color: var(--muted); line-height: 1.45; }
+.side-use strong { color: var(--text); font-weight: 600; }
+.modal-use { font-size: 0.8rem; color: var(--muted); }
+.side-row .side-time { margin-left: auto; }
+.side-row .side-time + .side-dot { margin-left: 0.45rem; }

@@ -357,7 +357,21 @@ function errorText(e: unknown): string {
   return o.data?.message || o.name || JSON.stringify(e).slice(0, 300)
 }
 
+/** The session's token use from OpenCode: its context at the end, and the tokens generated. Best effort. */
+export async function recordTokens(directory: string, jobId: string, sessionId: string) {
+  const ms = await ocMessages(directory, sessionId).catch(() => null)
+  if (!ms?.ok) return
+  const used = ms.data.filter((m) => m.info.role === "assistant" && m.info.tokens).map((m) => m.info.tokens!)
+  if (!used.length) return
+  const t = used.at(-1)!
+  await prisma.taskJob.update({
+    where: { id: jobId },
+    data: { contextTokens: t.input + t.cache.read + t.cache.write + t.output, outputTokens: used.reduce((n, u) => n + u.output + u.reasoning, 0) },
+  }).catch(() => {})
+}
+
 async function end(job: Job, state: "done" | "failed" | "stopped", note: string, log: Log) {
+  await recordTokens(workspacePath(job.task.project.slug), job.id, job.sessionId)
   const where = job.phase ? (job.item ? ` ${job.phase.number}.${job.item.position}` : job.step ? ` ${job.phase.number}.${job.step.number}` : ` (phase ${job.phase.number})`)
     : job.item ? ` ${job.item.position}` : ""
   log(`task ${job.task.number}: ${JOB_LABEL[job.kind] ?? job.kind}${where} ${state}${note ? `: ${note}` : ""}`)
@@ -482,6 +496,7 @@ export async function stopTaskJobs(taskId: string, why: string) {
   const jobs = await prisma.taskJob.findMany({ where: { taskId, state: "running" }, include: { task: { include: { project: true } } } })
   for (const j of jobs) {
     await ocAbort(workspacePath(j.task.project.slug), j.sessionId)
+    await recordTokens(workspacePath(j.task.project.slug), j.id, j.sessionId)
     await prisma.taskJob.update({ where: { id: j.id }, data: { state: "stopped", note: why, endedAt: new Date() } })
   }
 }
