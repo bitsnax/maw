@@ -12,12 +12,13 @@ export type { TaskAlert }
 //   question   a step waits for your check, or an item waits for your answer
 //   stopped    the task stops for you without an error: phases or steps to
 //              approve, a phase to plan, a branch to make or switch to
+//              (approvals MAW makes itself, hands-off, are not stops)
 // Sessions are watched from their live states (not here).
 
 
 export async function taskAlerts(): Promise<TaskAlert[]> {
   const [tasks, checks, items, phases] = await Promise.all([
-    prisma.task.findMany({ select: { id: true, number: true, title: true, status: true, runnerNote: true, project: { select: { name: true } } } }),
+    prisma.task.findMany({ select: { id: true, number: true, title: true, status: true, approve: true, runnerNote: true, project: { select: { name: true } } } }),
     prisma.taskStep.findMany({ where: { status: "waiting-check" }, select: { phase: { select: { taskId: true } } } }),
     prisma.taskItem.groupBy({ by: ["taskId"], where: { developer: true, checked: false }, _count: { _all: true } }),
     prisma.taskPhase.findMany({ where: { status: { not: "done" } }, orderBy: { number: "asc" }, select: { taskId: true, status: true } }),
@@ -28,9 +29,10 @@ export async function taskAlerts(): Promise<TaskAlert[]> {
   const first = new Map<string, string>()
   for (const p of phases) if (!first.has(p.taskId)) first.set(p.taskId, p.status)
   return tasks.map((s) => ({
-    id: s.id, project: s.project.name, number: s.number, title: s.title, status: s.status,
+    // Phases ready that MAW approves itself: the task goes on, so no stop.
+    id: s.id, project: s.project.name, number: s.number, title: s.title, status: s.status === "phases-ready" && s.approve === "all" ? "planning" : s.status,
     checks: c.get(s.id) ?? 0, items: i.get(s.id) ?? 0,
-    approvals: s.status === "in-progress" && (first.get(s.id) === "steps-ready" || first.get(s.id) === "pending") ? 1 : 0,
+    approvals: s.status === "in-progress" && s.approve === "you" && (first.get(s.id) === "steps-ready" || first.get(s.id) === "pending") ? 1 : 0,
     note: s.runnerNote,
   }))
 }

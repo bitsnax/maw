@@ -4,16 +4,17 @@ import Link from "next/link"
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
 import { deleteTask, editTask, newTask } from "../../workspace/task-actions"
+import ApprovalFields from "../../workspace/ApprovalFields"
 
 // The project's tasks: write one here (title, request, optional branch);
 // MAW's agent breaks it into phases and steps, and it is followed on the
 // Dashboard. Edit and Remove are here too.
 
 export type TaskRow = {
-  id: string; number: number; title: string; request: string; branch: string | null
+  id: string; number: number; title: string; request: string; branch: string | null; approve: string; checksAtEnd: boolean
   status: string; statusLabel: string; phases: number; steps: string; updated: string
 }
-type Form = { id: string | null; title: string; request: string; branch: string; branchTouched: boolean }
+type Form = { id: string | null; title: string; request: string; branch: string; branchTouched: boolean; approve: string; checksAtEnd: boolean }
 
 /** The branch a task gets unless you change it: "task-tool-count-per-connection". */
 const branchFor = (title: string) => {
@@ -36,7 +37,7 @@ export default function ProjectTasks({ projectId, tasks }: { projectId: string; 
     e.preventDefault()
     if (!form) return
     setBusy(true)
-    const input = { title: form.title, request: form.request, branch: form.branch }
+    const input = { title: form.title, request: form.request, branch: form.branch, approve: form.approve, checksAtEnd: form.checksAtEnd }
     const r = form.id ? await editTask(form.id, input) : await newTask(projectId, input)
     setBusy(false)
     if (!r.ok) { setErr({ message: r.message, errors: r.errors }); return }
@@ -67,7 +68,7 @@ export default function ProjectTasks({ projectId, tasks }: { projectId: string; 
                 <td className="data-nowrap">{s.updated}</td>
                 <td className="pcmd-actions-cell"><span className="pcmd-tools">
                   <button type="button" className="pcmd-tool" aria-label={`Edit task ${s.number}`}
-                    onClick={() => open({ id: s.id, title: s.title, request: s.request, branch: s.branch ?? branchFor(s.title), branchTouched: !!s.branch })}>Edit</button>
+                    onClick={() => open({ id: s.id, title: s.title, request: s.request, branch: s.branch ?? branchFor(s.title), branchTouched: !!s.branch, approve: s.approve, checksAtEnd: s.checksAtEnd })}>Edit</button>
                   <button type="button" className="pcmd-tool is-danger" aria-label={`Remove task ${s.number}`} onClick={() => void remove(s)}>Remove</button>
                 </span></td>
               </tr>
@@ -75,7 +76,7 @@ export default function ProjectTasks({ projectId, tasks }: { projectId: string; 
           </tbody>
         </table>
       )}
-      <div><button type="button" className="btn btn-small btn-primary" onClick={() => open({ id: null, title: "", request: "", branch: "", branchTouched: false })}>New task</button></div>
+      <div><button type="button" className="btn btn-small btn-primary" onClick={() => open({ id: null, title: "", request: "", branch: "", branchTouched: false, approve: "you", checksAtEnd: false })}>New task</button></div>
       {note && <div className="form-alert">{note}</div>}
 
       <dialog ref={ref} className="pcmd-dialog ptask-dialog" onClose={() => setForm(null)}>
@@ -96,6 +97,9 @@ export default function ProjectTasks({ projectId, tasks }: { projectId: string; 
             <input id="st-branch" className="form-input data-mono" value={form.branch} placeholder="task-tool-count"
               onChange={(e) => { setForm({ ...form, branch: e.target.value, branchTouched: true }); setErr({}) }} />
             {err.errors?.branch && <div className="form-error">{err.errors.branch}</div>}
+            <ApprovalFields idPrefix="st" approve={form.approve} checksAtEnd={form.checksAtEnd}
+              onChange={(approve, checksAtEnd) => { setForm({ ...form, approve, checksAtEnd }); setErr({}) }} />
+            {err.errors?.approve && <div className="form-error">{err.errors.approve}</div>}
             <p className="pcmd-help">The request is the whole brief. MAW&apos;s agent plans the task into phases, each phase into steps, and works the steps, each in its own session. MAW changes files only on this branch: before the steps run, create it with your command button (it fills your buttons&apos; {"{branch}"}). Planning reads the project and works on any branch.</p>
             <div className="pcmd-actions">
               <button type="button" className="btn" onClick={() => setForm(null)}>Cancel</button>

@@ -275,6 +275,11 @@ model Task {
   // why the runner is waiting before the next step (wrong or protected branch), or ""
   runnerNote  String         @default("")
   branch      String?
+  // who approves: "you" (the phases and each phase's steps), "steps" (you the
+  // phases; MAW plans and approves each phase's steps), "all" (MAW both)
+  approve     String         @default("you")
+  // steps marked Check wait for you together at the end of their phase
+  checksAtEnd Boolean        @default(false)
   // the task plan: what the phases add up to
   overview    String         @default("")
   outOfScope  String         @default("")

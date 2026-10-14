@@ -2749,3 +2749,15 @@ a {
 .console-file-actions { display: inline-flex; align-items: center; gap: 0.5rem; }
 
 .side-act-repair { color: var(--warn); font-size: 0.85rem; }
+
+/* Approvals (New task / Edit task, task sidebar) */
+.approve-fields { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+.approve-fields select { width: 100%; max-width: 100%; min-width: 0; text-overflow: ellipsis; }
+.approve-fields .pcmd-help { overflow-wrap: anywhere; }
+.approve-check { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; color: var(--text); }
+.approve-check input { accent-color: var(--brand); }
+.side-dot.is-check-later { background: transparent; box-shadow: inset 0 0 0 2px var(--warn); }
+.task-status.is-check-later { background: var(--warn-bg); color: var(--warn); }
+.side-act-held { color: var(--warn); font-size: 0.85rem; }
+.side-approve .form-input { font-size: 0.85rem; }
+.side-approve { min-width: 0; max-width: 100%; }

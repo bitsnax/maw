@@ -17,12 +17,13 @@ export const PHASE_STATUS: Record<string, string> = {
   pending: "Not planned yet", planning: "Planning steps", "steps-ready": "Steps ready for you",
   "in-progress": "In progress", blocked: "Blocked", done: "Done",
 }
-export { REPAIRS } from "./task-limits"
+export { APPROVE, REPAIRS } from "./task-limits"
+import { APPROVE } from "./task-limits"
 export const STEP_STATUS: Record<string, string> = {
-  pending: "Pending", "in-progress": "In progress", verifying: "Verifying", deploying: "Deploying", "waiting-check": "Waiting for your check", done: "Done", blocked: "Blocked",
+  pending: "Pending", "in-progress": "In progress", verifying: "Verifying", deploying: "Deploying", "waiting-check": "Waiting for your check", "check-later": "Check at the phase end", done: "Done", blocked: "Blocked",
 }
 
-export type NewTaskInput = { title: string; request: string; branch?: string }
+export type NewTaskInput = { title: string; request: string; branch?: string; approve?: string; checksAtEnd?: boolean }
 
 /** The branch a new task is given unless you change it: "task-3-tool-count". */
 export function defaultBranch(s: { number: number; title: string }): string {
@@ -45,8 +46,15 @@ export function checkTaskInput(i: NewTaskInput): Record<string, string> {
   if (!i.request.trim()) e.request = "Describe the work: what to build or change, what is out of scope, and when it is done."
   const b = (i.branch ?? "").trim()
   if (b && !BRANCH.test(b)) e.branch = "Not a valid git branch name."
+  if (i.approve !== undefined && !(i.approve in APPROVE)) e.approve = "Choose who approves."
   return e
 }
+
+/** The approval settings in the input (left out: unchanged, or the defaults for a new task). */
+const approvals = (i: NewTaskInput) => ({
+  ...(i.approve !== undefined ? { approve: i.approve } : {}),
+  ...(i.checksAtEnd !== undefined ? { checksAtEnd: i.checksAtEnd } : {}),
+})
 
 export async function createTask(projectId: string, userId: string | null, i: NewTaskInput) {
   const errors = checkTaskInput(i)
@@ -54,7 +62,7 @@ export async function createTask(projectId: string, userId: string | null, i: Ne
   const task = await prisma.$transaction(async (tx) => {
     const last = await tx.task.findFirst({ where: { projectId }, orderBy: { number: "desc" }, select: { number: true } })
     return tx.task.create({
-      data: { projectId, number: (last?.number ?? 0) + 1, title: i.title.trim(), request: i.request.trim(), branch: i.branch?.trim() || null, createdById: userId },
+      data: { projectId, number: (last?.number ?? 0) + 1, title: i.title.trim(), request: i.request.trim(), branch: i.branch?.trim() || null, createdById: userId, ...approvals(i) },
     })
   })
   return { ok: true as const, task }
@@ -63,7 +71,7 @@ export async function createTask(projectId: string, userId: string | null, i: Ne
 export async function updateTask(id: string, i: NewTaskInput) {
   const errors = checkTaskInput(i)
   if (Object.keys(errors).length) return { ok: false as const, errors }
-  const r = await prisma.task.updateMany({ where: { id }, data: { title: i.title.trim(), request: i.request.trim(), branch: i.branch?.trim() || null } })
+  const r = await prisma.task.updateMany({ where: { id }, data: { title: i.title.trim(), request: i.request.trim(), branch: i.branch?.trim() || null, ...approvals(i) } })
   return r.count ? { ok: true as const } : { ok: false as const, errors: {}, message: "This task no longer exists." }
 }
 

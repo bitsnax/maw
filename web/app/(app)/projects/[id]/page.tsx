@@ -70,7 +70,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         tasks={tasks.map((t) => {
           const pr = progress(t)
           return {
-            id: t.id, number: t.number, title: t.title, request: t.request, branch: t.branch,
+            id: t.id, number: t.number, title: t.title, request: t.request, branch: t.branch, approve: t.approve, checksAtEnd: t.checksAtEnd,
             status: t.status, statusLabel: TASK_STATUS[t.status] ?? t.status,
             phases: pr.phases, steps: pr.steps ? `${pr.done} of ${pr.steps}` : "—", updated: when(t.updatedAt),
           }

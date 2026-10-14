@@ -1,7 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { answerTaskItem, phaseControl, saveTaskBranch, stepControl, taskControl, taskView, type TaskView } from "./task-actions"
+import { answerTaskItem, phaseControl, saveTaskApprovals, saveTaskBranch, stepControl, taskControl, taskView, type TaskView } from "./task-actions"
+import ApprovalFields from "./ApprovalFields"
 import { Markdown } from "./conversation"
 import { Code } from "@/app/components/code"
 import { REPAIRS } from "@/lib/task-limits"
@@ -91,7 +92,12 @@ export default function TaskPanel({ taskId, shownSession, onOpenSession, onAuto,
   const allSteps = s.phases.flatMap((p) => p.steps)
   const done = allSteps.filter((x) => x.status === "done").length
   const cur = s.phases.find((p) => p.status !== "done") ?? null
-  const step = cur && cur.status === "in-progress" ? cur.steps.find((x) => x.status !== "done") ?? null : null
+  // The step MAW is at (a check held to the phase's end is passed over until then).
+  const step = cur && cur.status === "in-progress" ? cur.steps.find((x) => x.status !== "done" && !(x.status === "check-later" && s.checksAtEnd)) ?? null : null
+  const held = cur ? cur.steps.filter((x) => x.status === "check-later").length : 0
+  // Approvals MAW makes itself (hands-off) are not stops.
+  const autoPhases = s.approve === "all"
+  const autoSteps = s.approve !== "you"
   const forYou = s.items.filter((q) => q.developer && !q.checked).length
   const curForYou = cur ? cur.items.filter((q) => q.developer && !q.checked).length : 0
   const failed = s.status === "blocked" ? s.jobs.find((j) => j.state === "failed" || j.state === "stopped") : undefined
@@ -117,8 +123,8 @@ export default function TaskPanel({ taskId, shownSession, onOpenSession, onAuto,
     : s.status === "done" ? "Done"
     : cur ? `Phase ${cur.number} of ${s.phases.length}${step ? ` · Step ${cur.number}.${step.number} of ${cur.steps.length}` : ""}`
     : ""
-  const needed = !s.now && (["paused", "blocked", "phases-ready"].includes(s.status) || forYou > 0 || (s.status === "in-progress" && (
-    !s.branch || !!s.runnerNote || curForYou > 0 || cur?.status === "pending" || cur?.status === "steps-ready" || step?.status === "waiting-check" || step?.status === "blocked")))
+  const needed = !s.now && (["paused", "blocked"].includes(s.status) || (s.status === "phases-ready" && !autoPhases) || forYou > 0 || (s.status === "in-progress" && (
+    !s.branch || !!s.runnerNote || curForYou > 0 || (!autoSteps && (cur?.status === "pending" || cur?.status === "steps-ready")) || step?.status === "waiting-check" || step?.status === "blocked")))
 
   const working = (waitingFor: number, answerIn: Open) => {
     if (s.now) return (<>
@@ -185,7 +191,8 @@ export default function TaskPanel({ taskId, shownSession, onOpenSession, onAuto,
             <Btn busy={busy} primary onClick={() => void act("resume")}>Retry</Btn>
           </div>
         </>)
-      case "phases-ready": return (<>
+      case "phases-ready": if (autoPhases) return <p className="side-act-text"><span className="chat-working">Approving</span> the phases: MAW approves them itself (hands-off).</p>
+        return (<>
         <p className="side-act-text">The phases are ready. Read them (each opens below), then approve them or have them planned again.</p>
         <div className="side-act-buttons"><Btn busy={busy} onClick={() => setDir({ for: "replan-phases", text: "" })}>Plan again…</Btn><Btn busy={busy} primary onClick={() => void act("approve-phases")}>Approve phases</Btn></div>
       </>)
@@ -194,6 +201,9 @@ export default function TaskPanel({ taskId, shownSession, onOpenSession, onAuto,
         if (step?.status === "deploying") return <p className="side-act-text"><span className="chat-working">Deploying</span> after step {cur!.number}.{step.number}: running the deploy command.</p>
         if (s.now) return working(0, null)
         if (!cur) return <p className="side-act-text">Every phase is done.</p>
+        if (autoSteps && (cur.status === "pending" || cur.status === "steps-ready")) return (
+          <p className="side-act-text"><span className="chat-working">{cur.status === "pending" ? "Planning" : "Approving"}</span> phase {cur.number}&apos;s steps: MAW {cur.status === "pending" ? "plans them" : "approves them"} itself (hands-off).</p>
+        )
         if (cur.status === "pending") return (<>
           <p className="side-act-text">Phase {cur.number}, &ldquo;{cur.title}&rdquo;, is next. MAW plans it into steps; give it a direction first if the steps must follow something.</p>
           <div className="side-act-buttons"><Btn busy={busy} onClick={() => setDir({ for: "plan-steps", text: "" })}>Add direction…</Btn><Btn busy={busy} primary onClick={() => void phaseAct("plan-steps")}>Plan steps</Btn></div>
@@ -204,6 +214,7 @@ export default function TaskPanel({ taskId, shownSession, onOpenSession, onAuto,
           <div className="side-act-buttons"><Btn busy={busy} onClick={() => setDir({ for: "replan-steps", text: "" })}>Plan again…</Btn><Btn busy={busy} primary onClick={() => void phaseAct("approve-steps")}>Approve steps</Btn></div>
         </>)
         if (step?.status === "waiting-check") return (<>
+          {held + cur.steps.filter((x) => x.status === "waiting-check").length > 1 && <p className="side-act-text side-act-held">{cur.steps.filter((x) => x.status === "waiting-check" || x.status === "check-later").length} checks wait for you in this phase, one after another.</p>}
           <p className="side-act-text"><strong>Check step {cur.number}.{step.number} yourself.</strong> MAW made the change{step.deployOutput ? " and deployed it" : ""}; it passed the verify commands. The buttons change nothing: look first.</p>
           {step.manualCheck.trim() && <div className="side-act-check"><Markdown text={step.manualCheck} /></div>}
           <div className="side-act-buttons"><Btn busy={busy} onClick={() => setDir({ for: "not-right", text: "" })}>Doesn&apos;t work…</Btn><Btn busy={busy} primary onClick={() => void stepAct("checked")}>Works as described</Btn></div>
@@ -233,7 +244,7 @@ export default function TaskPanel({ taskId, shownSession, onOpenSession, onAuto,
         <span className={`task-status is-${s.status}`}>{s.statusLabel}</span>
         {s.branch && <span className="data-mono side-branch" title="The task's branch">{s.branch}</span>}
       </div>
-      {s.phases.length > 0 && <div className="side-progress">{done} of {allSteps.length} steps done</div>}
+      {s.phases.length > 0 && <div className="side-progress">{done} of {allSteps.length} steps done{held > 0 && s.checksAtEnd ? ` · ${held} check${held === 1 ? "" : "s"} held to the phase end` : ""}</div>}
 
       {action && (
         <div className={`side-act${needed ? " is-needed" : ""}${s.status === "blocked" ? " is-blocked" : ""}`} role="status">
@@ -284,6 +295,11 @@ export default function TaskPanel({ taskId, shownSession, onOpenSession, onAuto,
           </div>
         </div>
       )}
+
+      <div className="side-sec side-approve">
+        <ApprovalFields idPrefix="side" approve={s.approve} checksAtEnd={s.checksAtEnd} disabled={busy || s.status === "done"}
+          onChange={(approve, checksAtEnd) => void run(() => saveTaskApprovals(s.id, approve, checksAtEnd))} />
+      </div>
 
       <ContextMeter use={context} />
       <div className="side-foot"><a className="side-link" href={`/api/tasks/${s.id}/markdown`}>Download as markdown</a></div>

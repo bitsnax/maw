@@ -210,10 +210,19 @@ What MAW does, and where it stops for you:
 | Steps (in order) | one session per step; the model may edit files (no commits, no deploys); then MAW runs the verify commands, deploys when needed, and keeps git status and diff with the step; when the verify or the deploy fails, MAW runs the step again with the failing output (**2 repairs** at most) before it blocks | a step marked **Check**: Works as described / Doesn't work… (it runs again with your note); a **blocked** step: Try again (with a direction) or Mark done |
 | Done | the last step of the last phase | commit, push and merge with your buttons |
 
+- **Approvals** (per task: New task / Edit task, or the sidebar; applied
+  within seconds): *You approve phases and steps* (the table above); *You
+  approve phases; MAW approves steps* (MAW also starts each phase's
+  planning, so no Plan steps); *MAW approves phases and steps*. With **Hold
+  checks to the end of each phase**, a step marked Check does not stop the
+  phase: MAW goes on, and once no other step is left to run, the phase's
+  checks wait for you together (the last step deploys first). Items only
+  you can answer, checks and blocks always stop.
+
 - **Deploys are MAW's**, never the model's: after the verify commands pass,
   before any check, after a step the planner marked *deploy* (a schema
   change, a new route), and after a phase's last step. A failed deploy
-  blocks the step with its output.
+  is repaired like a failed verify, then blocks the step with its output.
 - **The branch check** runs before every step: on a protected branch, on
   another branch than the task's, or with no task branch, MAW waits and
   the Dashboard says why (the branch can be set right there).

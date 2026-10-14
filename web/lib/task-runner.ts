@@ -37,6 +37,11 @@ import { branchProblem, projectChanges, runDeploy, runVerify } from "./task-step
 //                    or STEP_SESSIONS sessions ended without step_finish
 //                  when every step is done the phase is done; the next phase
 //                  waits for Plan steps; the last phase done → task done.
+// Hands-off approvals (task.approve): "steps" lets MAW start each phase's
+// planning and approve its steps; "all" also approves the phases. With
+// task.checksAtEnd a step marked Check is held ("check-later") and MAW goes
+// on; when the phase's other steps are done, the held checks wait for you
+// ("waiting-check"), one after another. Items for you always wait.
 // A session that fails (model error, no answer, nothing recorded) sets the
 // task to "blocked" with the reason on its job; Retry on the Dashboard
 // returns it to where it was (task.resumeTo), as Resume does after Pause.
@@ -121,6 +126,15 @@ export function currentPhase<P extends { status: string }>(s: { phases: P[] }): 
 export async function phaseAction(s: FullTask): Promise<Action> {
   const ph = currentPhase(s)
   if (!ph) return { kind: "wait", why: "every phase is done" }
+  // Hands-off: MAW plans the phase into steps, and approves them, as you would.
+  if (s.approve !== "you" && ph.status === "pending") {
+    const r = await prisma.taskPhase.updateMany({ where: { id: ph.id, status: "pending" }, data: { status: "planning" } })
+    if (r.count) ph.status = "planning"
+  }
+  if (s.approve !== "you" && ph.status === "steps-ready") {
+    const r = await prisma.taskPhase.updateMany({ where: { id: ph.id, status: "steps-ready" }, data: { status: "in-progress" } })
+    if (r.count) ph.status = "in-progress"
+  }
   if (ph.status === "in-progress") return stepAction(s, ph)
   if (ph.status !== "planning") return { kind: "wait", why: `phase ${ph.number} is ${ph.status}` }
   const jobs = await prisma.taskJob.findMany({ where: { phaseId: ph.id }, select: { kind: true, state: true, itemId: true } })
@@ -146,7 +160,15 @@ async function noteRunner(s: FullTask, note: string) {
 
 /** The next thing a phase in progress needs: its first step that is not done. */
 async function stepAction(s: FullTask, ph: FullTask["phases"][number]): Promise<Action> {
-  const st = ph.steps.find((x) => x.status !== "done")
+  // Held checks wait for you once no other step of the phase is left to run
+  // (or at once, when the setting was turned off).
+  const held = ph.steps.filter((x) => x.status === "check-later").map((x) => x.id)
+  const left = ph.steps.some((x) => !["done", "check-later", "waiting-check"].includes(x.status))
+  if (held.length && (!s.checksAtEnd || !left)) {
+    await prisma.taskStep.updateMany({ where: { id: { in: held } }, data: { status: "waiting-check" } })
+    return { kind: "wait", why: `${held.length} held check${held.length === 1 ? "" : "s"} now wait${held.length === 1 ? "s" : ""} for you` }
+  }
+  const st = ph.steps.find((x) => x.status !== "done" && x.status !== "check-later")
   if (!st) {
     await prisma.taskPhase.update({ where: { id: ph.id }, data: { status: "done" } })
     const left = s.phases.filter((p) => p.id !== ph.id && p.status !== "done").length
@@ -187,14 +209,19 @@ async function finishStep(stepId: string, log: Log): Promise<string> {
   const st = await prisma.taskStep.findUniqueOrThrow({ where: { id: stepId }, include: { phase: { include: { task: true, steps: true } } } })
   const task = st.phase.task
   const at = `${st.phase.number}.${st.number}`
+  // Other steps of the phase still to run (held or waiting checks are not).
+  const othersLeft = st.phase.steps.some((x) => x.id !== st.id && !["done", "check-later", "waiting-check"].includes(x.status))
+  // A check held to the phase's end while other steps still run: no deploy for
+  // it now (the phase's last step deploys). The last step to run is never held.
+  const held = st.check && task.checksAtEnd && othersLeft
   await prisma.taskStep.update({ where: { id: st.id }, data: { status: "verifying" } })
   log(`task ${task.number}: step ${at}: running the verify commands`)
   const v = await runVerify(task.projectId, heartbeat)
   // Deploy (MAW runs it, never the model) before a check, after a step marked
-  // deploy, and when this is the phase's last step.
-  const last = st.phase.steps.every((x) => x.id === st.id || x.status === "done")
+  // deploy, and when this is the phase's last step (held checks wait for it).
+  const last = !othersLeft
   let dep: { ok: boolean; output: string } | null = null
-  if (v.ok && (st.check || st.deploy || last)) {
+  if (v.ok && ((st.check && !held) || st.deploy || last)) {
     await prisma.taskStep.update({ where: { id: st.id }, data: { status: "deploying" } })
     log(`task ${task.number}: step ${at}: running the deploy command`)
     dep = await runDeploy(task.projectId, heartbeat)
@@ -203,8 +230,8 @@ async function finishStep(stepId: string, log: Log): Promise<string> {
   const ok = v.ok && (dep?.ok ?? true)
   const outputs = { verifyOutput: v.output, diff, deployOutput: dep?.output ?? "" }
   if (ok) {
-    await prisma.taskStep.update({ where: { id: st.id }, data: { status: st.check ? "waiting-check" : "done", repairReason: "", ...outputs } })
-    const note = `verified${dep ? " and deployed" : ""}${st.check ? "; waiting for your check" : ""}`
+    await prisma.taskStep.update({ where: { id: st.id }, data: { status: held ? "check-later" : st.check ? "waiting-check" : "done", repairReason: "", ...outputs } })
+    const note = `verified${dep ? " and deployed" : ""}${held ? "; its check is held to the phase end" : st.check ? "; waiting for your check" : ""}`
     log(`task ${task.number}: step ${at}: ${note}`)
     return note
   }
@@ -429,8 +456,14 @@ export async function runnerTick(log: Log, projectId?: string): Promise<"busy" |
   if (!projectId) heartbeat()
   const job = await runningJob(projectId)
   if (job) { await checkJob(job, log); return "busy" }
-  const tasks = await prisma.task.findMany({ where: { status: { in: ["planning", "in-progress"] }, ...(projectId ? { projectId } : {}) }, orderBy: { createdAt: "asc" }, select: { id: true } })
-  for (const { id } of tasks) {
+  const tasks = await prisma.task.findMany({ where: { status: { in: ["planning", "in-progress", "phases-ready"] }, ...(projectId ? { projectId } : {}) }, orderBy: { createdAt: "asc" }, select: { id: true, status: true, approve: true, number: true } })
+  for (const t of tasks) {
+    if (t.status === "phases-ready") {
+      // Hands-off: MAW approves the phases as you would.
+      if (t.approve === "all" && (await approvePhases(t.id)).ok) log(`task ${t.number}: phases approved by MAW (hands-off)`)
+      continue
+    }
+    const id = t.id
     const s = await getTask(id)
     if (!s || (s.status !== "planning" && s.status !== "in-progress")) continue
     const a = s.status === "planning" ? await planningAction(s) : await phaseAction(s)

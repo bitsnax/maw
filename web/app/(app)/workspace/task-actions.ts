@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache"
 import { adminSession } from "@/lib/admin-session"
 import { prisma } from "@/lib/prisma"
 import {
-  PHASE_STATUS, STEP_STATUS, TASK_STATUS, createTask, getTask, removeTask, saveProfile, taskKey, updateTask,
+  APPROVE, PHASE_STATUS, STEP_STATUS, TASK_STATUS, createTask, getTask, removeTask, saveProfile, taskKey, updateTask,
   type NewTaskInput,
 } from "@/lib/tasks"
 import {
@@ -25,6 +25,8 @@ type Item = { id: string; text: string; checked: boolean; developer: boolean; an
 export type TaskView = {
   id: string; projectId: string; number: number; key: string; title: string; request: string
   status: string; statusLabel: string; branch: string | null; updatedAt: string
+  /** Who approves (you / steps / all) and whether checks wait for the phase's end. */
+  approve: string; checksAtEnd: boolean
   /** Where Resume / Retry returns the task: planning or in-progress. */
   resumeTo: string | null
   /** Why the runner waits before the next step (the branch), or "". */
@@ -83,7 +85,7 @@ export async function taskView(id: string): Promise<Reply<TaskView>> {
     ok: true,
     data: {
       id: s.id, projectId: s.projectId, number: s.number, key: taskKey(s), title: s.title, request: s.request,
-      status: s.status, statusLabel: TASK_STATUS[s.status] ?? s.status, branch: s.branch, resumeTo: s.resumeTo, runnerNote: s.runnerNote, updatedAt: s.updatedAt.toISOString(),
+      status: s.status, statusLabel: TASK_STATUS[s.status] ?? s.status, branch: s.branch, approve: s.approve, checksAtEnd: s.checksAtEnd, resumeTo: s.resumeTo, runnerNote: s.runnerNote, updatedAt: s.updatedAt.toISOString(),
       overview: s.overview, outOfScope: s.outOfScope, notes: s.notes,
       items: s.items.map(item), findings: s.findings.map(f),
       jobs, now, runnerAge: seen ? Math.max(0, Math.round((Date.now() - seen.getTime()) / 1000)) : null,
@@ -121,6 +123,14 @@ export async function editTask(id: string, input: NewTaskInput): Promise<Reply<n
   if (!r.ok) return { ok: false, message: r.message ?? "Check the fields below.", errors: r.errors }
   if (s) revalidatePath(`/projects/${s.projectId}`)
   return { ok: true, data: null }
+}
+
+/** Who approves the task's plan, and whether checks wait for the phase's end (MAW applies it within seconds). */
+export async function saveTaskApprovals(id: string, approve: string, checksAtEnd: boolean): Promise<Reply<null>> {
+  if (!(await adminSession())) return { ok: false, message: "Only an admin can change tasks." }
+  if (!(approve in APPROVE) || typeof checksAtEnd !== "boolean") return { ok: false, message: "Choose who approves." }
+  const r = await prisma.task.updateMany({ where: { id }, data: { approve, checksAtEnd } })
+  return r.count ? { ok: true, data: null } : { ok: false, message: "This task no longer exists." }
 }
 
 export async function deleteTask(id: string): Promise<Reply<null>> {

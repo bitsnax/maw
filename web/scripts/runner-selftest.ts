@@ -20,6 +20,10 @@
  *             times (the step and both repairs) → blocked → Try again with
  *             a direction → done;
  *             1.4 blocked by the model → Mark done → phase and task done
+ *   hands-off approve "steps" leaves the phases to you; "all": MAW approves
+ *             the phases and the steps; checks held to the phase end (no
+ *             deploy for a held one), released together; the next phase
+ *             planned without Plan steps
  * Usage: runner-selftest.ts <machine id> <root>
  * Environment: MAW_OPENCODE_URL, MAW_OPENCODE_PASSWORD, MAW_WORKSPACES_DIR.
  */
@@ -374,6 +378,49 @@ async function steps(projectId: string, slug: string, root: string) {
   check("the alerts digest lists the task, done", after.some((x) => x.id === id && x.status === "done") && before.some((x) => x.id === id))
 }
 
+async function handsOff(projectId: string) {
+  console.log("hands-off approvals and checks held to the phase end")
+  // The project's folder is a git repo on task-x after steps(); its verify commands pass.
+  const t = await createTask(projectId, null, { title: "Hands off", request: "Three steps.", branch: "task-x", approve: "steps", checksAtEnd: true })
+  if (!t.ok) { check("task", false, t); return }
+  const id = t.task.id
+  const N = t.task.number
+  const cue = (step: string, tool: string, args: unknown) => `WHEN step, task ${N}, step ${step} CALL ${tool} ${JSON.stringify(args)}`
+  await prisma.task.update({ where: { id }, data: {
+    status: "phases-ready", overview: "Three small steps, then a later phase.",
+    request: ["Three steps.",
+      cue("1.1", "write", { filePath: "hands-1.txt", content: "1\n" }), cue("1.1", "step_finish", { status: "done", summary: "wrote hands-1.txt" }),
+      cue("1.2", "write", { filePath: "hands-2.txt", content: "2\n" }), cue("1.2", "step_finish", { status: "done", summary: "wrote hands-2.txt" }),
+      cue("1.3", "write", { filePath: "hands-3.txt", content: "3\n" }), cue("1.3", "step_finish", { status: "done", summary: "wrote hands-3.txt" }),
+    ].join("\n") } })
+  const ph = await prisma.taskPhase.create({ data: { taskId: id, number: 1, title: "Do it", goal: "Three files.", status: "steps-ready" } })
+  const ph2 = await prisma.taskPhase.create({ data: { taskId: id, number: 2, title: "Later", goal: "Planned by MAW.", status: "pending" } })
+  const mk = (n: number, title: string, chk: boolean) => prisma.taskStep.create({ data: { phaseId: ph.id, number: n, title, goal: title, changes: `1. ${title}.`, check: chk, manualCheck: chk ? `Look at hands-${n}.txt.` : "" } })
+  const h1 = await mk(1, "Write 1", true), h2 = await mk(2, "Write 2", false), h3 = await mk(3, "Write 3", true)
+  const step = (sid: string) => prisma.taskStep.findUniqueOrThrow({ where: { id: sid } })
+  const alertOf = async () => (await taskAlerts()).find((x) => x.id === id)
+
+  forgetBranchChecks()
+  await runnerTick(log, projectId)
+  check("approvals by you for the phases (setting \"steps\"): the phases still wait for you", (await status(id)) === "phases-ready" && (await alertOf())?.status === "phases-ready")
+  await prisma.task.update({ where: { id }, data: { approve: "all" } })
+  check("…set to \"all\": no stop for the sounds while MAW approves", (await alertOf())?.status === "planning")
+  await runnerTick(log, projectId)
+  check("…MAW approves the phases itself", (await status(id)) === "in-progress" && lines.some((l) => l.includes(`task ${N}: phases approved by MAW (hands-off)`)))
+  await turn(projectId, async () => (await step(h3.id)).status === "waiting-check" || (await status(id)) !== "in-progress", 180_000)
+  const [a1, a2, a3] = [await step(h1.id), await step(h2.id), await step(h3.id)]
+  check("…and phase 1's steps (steps-ready → in progress), and the steps ran", (await prisma.taskPhase.findUniqueOrThrow({ where: { id: ph.id } })).status === "in-progress" && a2.status === "done", { p: a2.status })
+  check("step 1.1 (Check) was held: the phase went on, no deploy for it", a1.deployOutput === "" && a1.result.includes("Done: wrote hands-1.txt"), a1.deployOutput)
+  check("step 1.3 (Check, the last to run): deployed, waits for your check", a3.status === "waiting-check" && a3.deployOutput.includes("echo deployed"), a3.status)
+  await runnerTick(log, projectId)
+  check("…then the held check of step 1.1 waits too (both now)", (await step(h1.id)).status === "waiting-check" && (await step(h3.id)).status === "waiting-check" && (await alertOf())?.checks === 2)
+  check("checks given: 1.1 and 1.3 done", (await checkStep(h1.id, true, "")).ok && (await checkStep(h3.id, true, "")).ok)
+  await turn(projectId, async () => (await prisma.taskPhase.findUniqueOrThrow({ where: { id: ph2.id } })).status !== "pending", 60_000)
+  check("phase 1 done; phase 2 planned by MAW without Plan steps (no stop for the sounds)", (await prisma.taskPhase.findUniqueOrThrow({ where: { id: ph.id } })).status === "done"
+    && (await prisma.taskPhase.findUniqueOrThrow({ where: { id: ph2.id } })).status === "planning" && (await alertOf())?.approvals === 0)
+  check("pause the hands-off task", (await pauseTask(id)).ok)
+}
+
 function tones() {
   console.log("sounds: which tone for which change")
   const a = (o: Partial<TaskAlert>): TaskAlert => ({ id: "s", project: "p", number: 1, title: "t", status: "in-progress", checks: 0, items: 0, approvals: 0, note: "", ...o })
@@ -411,6 +458,7 @@ async function main() {
     const id = await planning(p.project.id, p.project.slug)
     if (id) await phases(p.project.id, p.project.slug, id)
     await steps(p.project.id, p.project.slug, root)
+    await handsOff(p.project.id)
   } finally {
     const r = await removeProject(p.project.id, null)
     check("project removed", r.ok)
