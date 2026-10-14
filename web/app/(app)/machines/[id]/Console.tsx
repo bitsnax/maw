@@ -1,7 +1,8 @@
 "use client"
 
+import { CopyButton, highlightLines, langOf } from "@/app/components/code"
 import { useRouter } from "next/navigation"
-import { useEffect, useRef, useState, useTransition, type KeyboardEvent } from "react"
+import { useEffect, useMemo, useRef, useState, useTransition, type KeyboardEvent, type Ref } from "react"
 import {
   consoleList, consoleRead, consoleSearch, consoleGlob, consoleRun, consoleStatus, consoleStop, consoleJobs,
 } from "../actions"
@@ -257,19 +258,16 @@ function FileView({ file, closeFile, readMore }: { file: OpenFile; closeFile: ()
           {file.status === "done" && ` · ${file.totalLines} line${file.totalLines === 1 ? "" : "s"}`}
           {file.line ? ` · line ${file.line}` : ""}
         </span>
-        <button type="button" className="btn btn-small" onClick={closeFile}>Close</button>
+        <span className="console-file-actions">
+          {file.status === "done" && file.lines.length > 0 && <CopyButton text={file.lines.map((l) => l.text).join("\n")} label="Copy file" />}
+          <button type="button" className="btn btn-small" onClick={closeFile}>Close</button>
+        </span>
       </div>
       {file.status === "loading" && <p className="app-empty">Opening…</p>}
       {file.status === "error" && <div className="form-alert">{file.message}</div>}
       {file.status === "done" && (
         file.lines.length === 0 ? <p className="app-empty">The file is empty.</p> : (
-          <pre className="logs-body console-file">
-            {file.lines.map((l) => (
-              <div key={l.n} ref={l.n === file.line ? hit : undefined} className={l.n === file.line ? "is-hit" : undefined}>
-                <span className="console-ln">{l.n}</span>{l.text}
-              </div>
-            ))}
-          </pre>
+          <FileLines file={file} hit={hit} />
         )
       )}
       {file.status === "done" && file.more && (
@@ -628,5 +626,21 @@ function Run({ machineId, root, runAs, commandsOk, commandsError }: {
         </div>
       )}
     </div>
+  )
+}
+
+/** The open file: numbered lines, highlighted by the file's type (YAML,
+ *  TypeScript, Python, …), the line you came for marked. */
+function FileLines({ file, hit }: { file: { path: string; line: number | null; lines: { n: number; text: string }[] }; hit: Ref<HTMLDivElement> }) {
+  const html = useMemo(() => highlightLines(file.lines.map((l) => l.text).join("\n"), langOf(file.path)), [file.lines, file.path])
+  return (
+    <pre className={`logs-body console-file${html ? " hljs" : ""}`}>
+      {file.lines.map((l, i) => (
+        <div key={l.n} ref={l.n === file.line ? hit : undefined} className={l.n === file.line ? "is-hit" : undefined}>
+          <span className="console-ln">{l.n}</span>
+          {html ? <span dangerouslySetInnerHTML={{ __html: html[i] ?? "" }} /> : l.text}
+        </div>
+      ))}
+    </pre>
   )
 }

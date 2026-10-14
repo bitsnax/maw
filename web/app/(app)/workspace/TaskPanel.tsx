@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { answerTaskItem, phaseControl, saveTaskBranch, stepControl, taskControl, taskView, type TaskView } from "./task-actions"
 import { Markdown } from "./conversation"
-import { Code } from "./code"
+import { Code } from "@/app/components/code"
 
 // A task in the Dashboard's right-hand sidebar (the left pane shows the
 // session MAW is working in). Your request becomes a task; MAW plans it into

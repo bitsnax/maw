@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react"
 import type { OcMessage, OcPart, OcQuestion } from "@/lib/opencode"
-import { Code, langOf } from "./code"
+import { Code, langOf } from "@/app/components/code"
 
 // The pieces of a conversation shown in the Dashboard's output window:
 // messages (prompts, streamed answers, thinking, tool rows), question cards,

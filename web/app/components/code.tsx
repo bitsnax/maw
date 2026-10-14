@@ -43,6 +43,28 @@ export function langOf(path: string): string {
 
 const MAX_HIGHLIGHT = 200_000
 
+/** Highlighted HTML split into lines. A span that runs over a line break (a
+ *  block comment, a multi-line string) is closed at the end of the line and
+ *  opened again on the next, so every line stands on its own. Null when the
+ *  language is unknown or the text too long: show it plain. */
+export function highlightLines(text: string, lang: string): string[] | null {
+  if (!lang || !hljs.getLanguage(lang) || text.length > MAX_HIGHLIGHT) return null
+  let html: string
+  try { html = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value } catch { return null }
+  const out: string[] = []
+  const open: string[] = []
+  let line = ""
+  for (const part of html.split(/(<span[^>]*>|<\/span>|\n)/)) {
+    if (!part) continue
+    if (part === "\n") { out.push(line + "</span>".repeat(open.length)); line = open.join(""); continue }
+    if (part.startsWith("<span")) open.push(part)
+    else if (part === "</span>") open.pop()
+    line += part
+  }
+  out.push(line + "</span>".repeat(open.length))
+  return out
+}
+
 export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [done, setDone] = useState(false)
   return (
@@ -60,6 +82,17 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
       </svg>
       <span className="code-copy-label">{done ? "Copied" : label}</span>
     </button>
+  )
+}
+
+/** One command on a line (a shell command to run), highlighted, with Copy at its end. */
+export function CodeLine({ text, lang = "bash" }: { text: string; lang?: string }) {
+  const html = useMemo(() => highlightLines(text, lang)?.join("\n") ?? null, [text, lang])
+  return (
+    <div className="code-line-box">
+      {html !== null ? <pre className="code-line-text hljs"><code dangerouslySetInnerHTML={{ __html: html }} /></pre> : <pre className="code-line-text"><code>{text}</code></pre>}
+      <CopyButton text={text} />
+    </div>
   )
 }
 

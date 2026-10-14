@@ -1,3 +1,4 @@
+import { CodeLine } from "@/app/components/code"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { prisma } from "@/lib/prisma"
@@ -91,7 +92,7 @@ export default async function MachinePage({ params, searchParams }: {
             {update.steps.map((s) => (
               <li key={s.command}>
                 {s.where}:
-                <pre className="code-line">{s.command}</pre>
+                <CodeLine text={s.command} />
               </li>
             ))}
           </ol>

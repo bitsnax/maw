@@ -757,34 +757,6 @@ code, pre, kbd, samp, .data-mono {
   color: var(--text-title-color);
   font-size: 0.92rem;
 }
-.code-line {
-  margin: 0.35rem 0 0;
-  padding: 0.45rem 0.65rem;
-  background: var(--code-bg);
-  color: var(--text);
-  border-radius: 7px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.82rem;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-.code-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.code-block {
-  margin: 0;
-  padding: 0.9rem 1rem;
-  max-height: 420px;
-  overflow: auto;
-  background: var(--code-bg);
-  color: var(--text);
-  border-radius: 9px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
 
 /* --- Machine page (app/(app)/machines/[id]) -------------------------- */
 .data-link {
@@ -1085,6 +1057,8 @@ code, pre, kbd, samp, .data-mono {
 }
 .console-file > div {
   white-space: pre-wrap;
+  padding-left: 4.1rem;
+  text-indent: -4.1rem;
 }
 .console-file .is-hit {
   background: rgba(255, 214, 102, 0.22);
@@ -1095,6 +1069,7 @@ code, pre, kbd, samp, .data-mono {
   margin-right: 0.9rem;
   color: var(--muted);
   text-align: right;
+  text-indent: 0;
   user-select: none;
 }
 .console-form {
@@ -2742,3 +2717,33 @@ a {
   color: inherit;
   font-size: inherit;
 }
+
+/* a one-line command with its Copy button (machine pages) */
+.code-line-box {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.35rem 0 0;
+  padding: 0.3rem 0.35rem 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--code-bg);
+}
+.code-line-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--syn-punct);
+  white-space: pre;
+}
+.install-file .code-body {
+  max-height: 420px;
+}
+.console-file {
+  color: var(--syn-punct);
+}
+
+.console-file-actions { display: inline-flex; align-items: center; gap: 0.5rem; }
