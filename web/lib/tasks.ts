@@ -17,6 +17,7 @@ export const PHASE_STATUS: Record<string, string> = {
   pending: "Not planned yet", planning: "Planning steps", "steps-ready": "Steps ready for you",
   "in-progress": "In progress", blocked: "Blocked", done: "Done",
 }
+export { REPAIRS } from "./task-limits"
 export const STEP_STATUS: Record<string, string> = {
   pending: "Pending", "in-progress": "In progress", verifying: "Verifying", deploying: "Deploying", "waiting-check": "Waiting for your check", done: "Done", blocked: "Blocked",
 }

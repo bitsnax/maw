@@ -1,7 +1,7 @@
 import { mkdirSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { prisma } from "./prisma"
-import { checkTaskInput, getTask, type FullTask } from "./tasks"
+import { checkTaskInput, getTask, REPAIRS, type FullTask } from "./tasks"
 import { startSession } from "./sessions"
 import { workspacePath } from "./workspace"
 import { WORKSPACES } from "./tools"
@@ -31,8 +31,10 @@ import { branchProblem, projectChanges, runDeploy, runVerify } from "./task-step
 //                    pending → (branch check) step session → step_finish
 //                    → MAW runs the verify commands and records git status/diff
 //                    → done, or "waiting-check" (a step marked Check: you check it),
-//                    or blocked (the step said so, the verify failed, or
-//                    STEP_SESSIONS sessions ended without step_finish)
+//                    or a repair: the verify or deploy failed, so the step
+//                    runs again with the failing output (REPAIRS times at
+//                    most), then blocked; blocked too when the step said so,
+//                    or STEP_SESSIONS sessions ended without step_finish
 //                  when every step is done the phase is done; the next phase
 //                  waits for Plan steps; the last phase done → task done.
 // A session that fails (model error, no answer, nothing recorded) sets the
@@ -199,17 +201,39 @@ async function finishStep(stepId: string, log: Log): Promise<string> {
   }
   const diff = await projectChanges(task.projectId, heartbeat)
   const ok = v.ok && (dep?.ok ?? true)
-  const status = !ok ? "blocked" : st.check ? "waiting-check" : "done"
-  const why = !v.ok ? `MAW: the verify command failed: ${v.failed}` : dep && !dep.ok ? "MAW: the deploy command failed." : ""
+  const outputs = { verifyOutput: v.output, diff, deployOutput: dep?.output ?? "" }
+  if (ok) {
+    await prisma.taskStep.update({ where: { id: st.id }, data: { status: st.check ? "waiting-check" : "done", repairReason: "", ...outputs } })
+    const note = `verified${dep ? " and deployed" : ""}${st.check ? "; waiting for your check" : ""}`
+    log(`task ${task.number}: step ${at}: ${note}`)
+    return note
+  }
+  // Failed: what the next session must fix, with the failing output.
+  const what = !v.ok ? `the verify command failed: ${v.failed}` : "the deploy command failed"
+  const reason = `MAW: ${what}.\n\n${tail(!v.ok ? v.output : dep!.output)}`
+  if (st.repairs < REPAIRS) {
+    const n = st.repairs + 1
+    await prisma.taskStep.update({
+      where: { id: st.id },
+      data: { status: "in-progress", repairs: n, repairReason: reason, result: addLine(st.result, `MAW: ${what}; repair ${n} of ${REPAIRS} follows.`), ...outputs },
+    })
+    const note = `${!v.ok ? `verify failed: ${v.failed}` : "deploy failed"}; repair ${n} of ${REPAIRS} next`
+    log(`task ${task.number}: step ${at}: ${note}`)
+    return note
+  }
   await prisma.taskStep.update({
     where: { id: st.id },
-    data: { status, verifyOutput: v.output, diff, deployOutput: dep?.output ?? "", ...(why ? { result: addLine(st.result, why) } : {}) },
+    data: { status: "blocked", repairReason: reason, result: addLine(st.result, `MAW: ${what}${st.repairs ? ` (after ${st.repairs} repair${st.repairs === 1 ? "" : "s"})` : ""}.`), ...outputs },
   })
-  if (!ok) await block(task.id)
-  const note = !v.ok ? `verify failed: ${v.failed}` : dep && !dep.ok ? "deploy failed"
-    : `verified${dep ? " and deployed" : ""}${st.check ? "; waiting for your check" : ""}`
+  await block(task.id)
+  const note = `${!v.ok ? `verify failed: ${v.failed}` : "deploy failed"}; blocked`
   log(`task ${task.number}: step ${at}: ${note}`)
   return note
+}
+
+/** The end of a command's output (where its error is), for the repair session's prompt. */
+function tail(output: string, lines = 80, chars = 6000): string {
+  return output.trim().split("\n").slice(-lines).join("\n").slice(-chars)
 }
 
 async function nextFinding(taskId: string) {
@@ -244,7 +268,10 @@ function jobTitle(s: FullTask, a: Extract<Action, { kind: "start" }>): string {
   if (a.job === "phase-checklist") return `${t} · phase ${a.phaseNumber} checklist`
   if (a.job === "phase-item") return `${t} · phase ${a.phaseNumber} item ${a.position}`
   if (a.job === "phase-steps") return `${t} · phase ${a.phaseNumber} steps`
-  if (a.job === "step") return `${t} · step ${a.phaseNumber}.${a.stepNumber}`
+  if (a.job === "step") {
+    const r = s.phases.find((p) => p.id === a.phaseId)?.steps.find((x) => x.id === a.stepId)?.repairs ?? 0
+    return `${t} · step ${a.phaseNumber}.${a.stepNumber}${r ? ` · repair ${r}` : ""}`
+  }
   return `${t} · phases`
 }
 
@@ -531,7 +558,7 @@ export async function checkStep(stepId: string, right: boolean, note: string): P
   if (!f.ok) return f
   await prisma.taskStep.update({
     where: { id: stepId },
-    data: right ? { status: "done", result: addLine(f.st.result, `Developer checked it${n ? `: ${n}` : "."}`) } : { status: "pending", result: addLine(f.st.result, `Developer: not right: ${n}`) },
+    data: right ? { status: "done", result: addLine(f.st.result, `Developer checked it${n ? `: ${n}` : "."}`) } : { status: "pending", repairs: 0, repairReason: "", result: addLine(f.st.result, `Developer: not right: ${n}`) },
   })
   return { ok: true }
 }
@@ -543,7 +570,8 @@ export async function retryStep(stepId: string, direction: string): Promise<R> {
   const f = await stepFor(stepId, ["blocked"])
   if (!f.ok) return f
   await prisma.taskJob.updateMany({ where: { stepId, note: NOFINISH }, data: { note: `${NOFINISH} (before your retry)` } })
-  await prisma.taskStep.update({ where: { id: stepId }, data: { status: "pending", result: d ? addLine(f.st.result, `Developer: ${d}`) : f.st.result } })
+  // Your Try again gives MAW its repairs again; the failing output stays for the next session.
+  await prisma.taskStep.update({ where: { id: stepId }, data: { status: "pending", repairs: 0, result: d ? addLine(f.st.result, `Developer: ${d}`) : f.st.result } })
   await unblock(f.task.id)
   return { ok: true }
 }
@@ -581,7 +609,7 @@ export async function reopenStep(stepId: string, note: string): Promise<R> {
   // The phase being worked on, or (when every phase is done) the last phase.
   const cur = currentPhase(task) ?? task.phases.at(-1)
   if (cur?.id !== st.phaseId) return { ok: false, message: "Only a step of the phase being worked on (or of the last phase, when the task is done) can be reopened." }
-  await prisma.taskStep.update({ where: { id: st.id }, data: { status: "pending", result: addLine(st.result, `Developer: reopened: ${n}`) } })
+  await prisma.taskStep.update({ where: { id: st.id }, data: { status: "pending", repairs: 0, repairReason: "", result: addLine(st.result, `Developer: reopened: ${n}`) } })
   await prisma.taskPhase.update({ where: { id: st.phaseId }, data: { status: "in-progress" } })
   if (task.status === "done") await prisma.task.update({ where: { id: task.id }, data: { status: "in-progress" } })
   return { ok: true }

@@ -1,4 +1,4 @@
-import type { FullTask } from "./tasks"
+import { REPAIRS, type FullTask } from "./tasks"
 
 // The prompts of the sessions MAW runs for a task. Each session starts
 // fresh, so its prompt carries what it needs from MAW's database (the
@@ -220,7 +220,9 @@ export function stepPrompt(s: FullTask, ph: Phase, st: Step, stepText: string): 
     "",
     stepText,
     ...(answers.length ? ["", "## The developer's answers and directions for this phase", "They override the step text above wherever they differ. Follow them exactly.", ...answers] : []),
-    ...(st.verifyOutput.trim() ? ["", "## The verify commands' output after the last try (fix what failed)", "```", st.verifyOutput.trim().slice(-6000), "```"] : []),
+    ...(st.repairReason.trim() ? ["", st.repairs ? `## Repair ${st.repairs} of ${REPAIRS} for step ${ph.number}.${st.number}` : "## What failed after the last session",
+      "The step's changes are in the working tree, but MAW's check after the last session failed. Find the cause in the output below, fix it with the smallest change, and finish again.",
+      "```", st.repairReason.trim(), "```"] : []),
     "",
     `## Your task: carry out step ${ph.number}.${st.number}`,
     "- Read what the read budget names, then make the changes with edit and write. Change only what the step says; if something outside it must change too, make the smallest change and say so in a step_note.",

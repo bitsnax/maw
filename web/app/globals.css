@@ -2747,3 +2747,5 @@ a {
 }
 
 .console-file-actions { display: inline-flex; align-items: center; gap: 0.5rem; }
+
+.side-act-repair { color: var(--warn); font-size: 0.85rem; }

@@ -160,8 +160,10 @@ async function checkAll(machineId: string, root: string) {
   check("bash workdir outside the project: refused", b6.status === 400, b6.events)
 
   const machine = await prisma.machine.findUniqueOrThrow({ where: { id: machineId } })
+  // A unique, always valid duration (the tag's number may have fewer than 5 digits).
+  const mark = String(Date.now() % 100000).padStart(5, "0")
   const ac = new AbortController()
-  const res = await handleToolRequest("bash", request("bash", { sessionID, directory: ws, args: { command: `sleep 300.${tag.slice(-5)}` } }, TOKEN, ac.signal))
+  const res = await handleToolRequest("bash", request("bash", { sessionID, directory: ws, args: { command: `sleep 300.${mark}` } }, TOKEN, ac.signal))
   const reader = res.body!.getReader()
   const first = JSON.parse(new TextDecoder().decode((await reader.read()).value).split("\n")[0]!)
   await sleep(800)

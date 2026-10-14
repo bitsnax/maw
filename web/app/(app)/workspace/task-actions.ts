@@ -44,6 +44,7 @@ export type TaskView = {
       id: string; number: number; title: string; files: string; check: boolean; status: string; statusLabel: string
       goal: string; readBudget: string; context: string; changes: string; verification: string
       manualCheck: string; result: string; verifyOutput: string; diff: string; deploy: boolean; deployOutput: string
+      repairs: number; repairReason: string
     }[]
   }[]
 }
@@ -94,6 +95,7 @@ export async function taskView(id: string): Promise<Reply<TaskView>> {
           id: x.id, number: x.number, title: x.title, files: x.files, check: x.check, status: x.status, statusLabel: STEP_STATUS[x.status] ?? x.status,
           goal: x.goal, readBudget: x.readBudget, context: x.context, changes: x.changes, verification: x.verification,
           manualCheck: x.manualCheck, result: x.result, verifyOutput: x.verifyOutput, diff: x.diff, deploy: x.deploy, deployOutput: x.deployOutput,
+          repairs: x.repairs, repairReason: x.repairReason,
         })),
       })),
     },

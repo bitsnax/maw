@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { answerTaskItem, phaseControl, saveTaskBranch, stepControl, taskControl, taskView, type TaskView } from "./task-actions"
 import { Markdown } from "./conversation"
 import { Code } from "@/app/components/code"
+import { REPAIRS } from "@/lib/task-limits"
 
 // A task in the Dashboard's right-hand sidebar (the left pane shows the
 // session MAW is working in). Your request becomes a task; MAW plans it into
@@ -122,6 +123,9 @@ export default function TaskPanel({ taskId, shownSession, onOpenSession, onAuto,
   const working = (waitingFor: number, answerIn: Open) => {
     if (s.now) return (<>
       <p className="side-act-text"><span className="chat-working">Working</span> {s.now.job.label} · {s.now.activity} · {took(s.now.job.createdAt, null, now)}</p>
+      {step && step.repairs > 0 && s.now.job.label === `Step ${cur!.number}.${step.number}` && (
+        <p className="side-act-text side-act-repair">Repair {step.repairs} of {REPAIRS}: {repairWhat(step.repairReason)} MAW gives the step this output and runs it again.</p>
+      )}
       <div className="side-act-buttons">
         {s.now.job.session && s.now.job.sessionId !== shownSession && <Btn busy={busy} onClick={() => onOpenSession(s.now!.job.sessionId)}>Show session</Btn>}
         <Btn busy={busy} onClick={() => void act("pause")}>Pause</Btn>
@@ -363,6 +367,12 @@ export function Modal({ open, title, onClose, wide, children }: { open: boolean;
 }
 
 /** The last line of a step's result (why it is blocked), without the "Blocked:" prefix. */
+/** "MAW: the verify command failed: x." → "The verify command failed: x." */
+function repairWhat(reason: string): string {
+  const first = reason.split("\n")[0]!.replace(/^MAW: /, "")
+  return first ? first[0]!.toUpperCase() + first.slice(1) : ""
+}
+
 function lastLine(t: string): string {
   return (t.trim().split("\n").at(-1) ?? "").replace(/^Blocked: /, "")
 }

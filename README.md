@@ -207,7 +207,7 @@ What MAW does, and where it stops for you:
 |---|---|---|
 | Task planning | a checklist of what the plan needs, one session per item, then the task plan and its phases | items only you can answer; **Phases ready**: Approve phases or Plan again (with a direction) |
 | Phase planning (one phase at a time) | **Plan steps** (with a direction, optional), the phase's checklist, one session per item, then the steps | items only you can answer; **Steps ready**: Approve steps or Plan again |
-| Steps (in order) | one session per step; the model may edit files (no commits, no deploys); then MAW runs the verify commands, deploys when needed, and keeps git status and diff with the step | a step marked **Check**: Works as described / Doesn't work… (it runs again with your note); a **blocked** step: Try again (with a direction) or Mark done |
+| Steps (in order) | one session per step; the model may edit files (no commits, no deploys); then MAW runs the verify commands, deploys when needed, and keeps git status and diff with the step; when the verify or the deploy fails, MAW runs the step again with the failing output (**2 repairs** at most) before it blocks | a step marked **Check**: Works as described / Doesn't work… (it runs again with your note); a **blocked** step: Try again (with a direction) or Mark done |
 | Done | the last step of the last phase | commit, push and merge with your buttons |
 
 - **Deploys are MAW's**, never the model's: after the verify commands pass,

@@ -14,9 +14,11 @@
  *             → steps → steps-ready → Plan again → Approve steps; Pause and
  *             Resume while in progress; phase 2: no steps → blocked → Retry
  *   steps     (a git repo in the folder) waits on the protected branch; on
- *             the task's branch: step 1.1 done (verified, diff kept);
- *             1.2 needs your check (not right → again → checked); 1.3 fails
- *             its verify → blocked → Try again with a direction → done;
+ *             the task's branch: step 1.1's verify fails, MAW's repair
+ *             session fixes it (verified, diff kept); 1.2 needs your check
+ *             (not right → again → checked); 1.3 fails its verify three
+ *             times (the step and both repairs) → blocked → Try again with
+ *             a direction → done;
  *             1.4 blocked by the model → Mark done → phase and task done
  * Usage: runner-selftest.ts <machine id> <root>
  * Environment: MAW_OPENCODE_URL, MAW_OPENCODE_PASSWORD, MAW_WORKSPACES_DIR.
@@ -275,8 +277,11 @@ async function steps(projectId: string, slug: string, root: string) {
     status: "in-progress", overview: "Four small steps.", notes: "Keep it small.",
     request: ["Carry out the steps.",
       cue("1.1", "bash", { command: "docker compose up -d --build", timeout: 60000 }),
-      cue("1.1", "write", { filePath: "step-a.txt", content: "a\n" }), cue("1.1", "step_note", { text: "step-a.txt: written" }), cue("1.1", "step_finish", { status: "done", summary: "wrote step-a.txt" }),
+      // 1.1: the first session forgets the file, so the verify fails; MAW's repair session writes it.
+      cue("1.1", "write", { filePath: "step-a.txt", content: "a\n" }, "Repair 1 of 2 for step 1.1"), cue("1.1", "step_note", { text: "step-a.txt: written" }, "Repair 1 of 2 for step 1.1"),
+      cue("1.1", "step_finish", { status: "done", summary: "wrote step-a.txt" }),
       cue("1.2", "write", { filePath: "step-b.txt", content: "b\n" }), cue("1.2", "step_finish", { status: "done", summary: "wrote step-b.txt" }),
+      // 1.3: every session writes BROKEN (the verify fails), so both repairs fail and the step is blocked; your Try again fixes it.
       cue("1.3", "write", { filePath: "step-c.txt", content: "BROKEN\n" }), cue("1.3", "write", { filePath: "step-c.txt", content: "fine\n" }, "Developer: fix it"),
       cue("1.3", "step_finish", { status: "done", summary: "wrote step-c.txt" }),
       cue("1.4", "step_finish", { status: "blocked", summary: "needs a key only you have" }),
@@ -305,7 +310,13 @@ async function steps(projectId: string, slug: string, root: string) {
   const f = await sh("cat step-a.txt")
   check("…a step session may write files (the file is in the project)", f.ok && f.text.trim() === "a", f)
   const j1 = await sjobs(s1.id)
-  check("…one session, titled, its job done and verified", j1.length === 1 && j1[0]!.state === "done" && j1[0]!.note.includes("verified") && (await prisma.projectSession.findUnique({ where: { id: j1[0]!.sessionId } }))?.title === "Steps · step 1.1", j1)
+  check("…the verify failed after the first session: repair 1 of 2 followed", j1.length === 2 && j1[0]!.note.includes("verify failed: test -f step-a.txt; repair 1 of 2 next") && a.result.includes("MAW: the verify command failed: test -f step-a.txt; repair 1 of 2 follows."), j1.map((j) => j.note))
+  check("…the repair session titled, its job done and verified; the step's reason cleared", j1[1]?.state === "done" && j1[1].note.includes("verified") && a.repairs === 1 && a.repairReason === ""
+    && (await prisma.projectSession.findUnique({ where: { id: j1[0]!.sessionId } }))?.title === "Steps · step 1.1" && (await prisma.projectSession.findUnique({ where: { id: j1[1]!.sessionId } }))?.title === "Steps · step 1.1 · repair 1", j1)
+  const m1r = j1[1] ? await ocMessages(workspacePath(slug), j1[1].sessionId) : null
+  const p1r = m1r?.ok ? userText(m1r.data) : ""
+  check("…the repair prompt names the repair and carries the failing command's output", p1r.includes("## Repair 1 of 2 for step 1.1") && p1r.includes("$ test -f step-a.txt") && p1r.includes("→ exit 1"), p1r.slice(p1r.indexOf("## Repair"), p1r.indexOf("## Repair") + 400))
+  check("no word in the repair prompt sets off the mock's other cues", !/\bask\b|sleep|slow|git status/.test(p1r.replace(/^WHEN .*$/gm, "")))
   const m1 = await ocMessages(workspacePath(slug), j1[0]!.sessionId)
   const p1 = m1.ok ? userText(m1.data) : ""
   const dk = m1.ok ? m1.data.flatMap((m) => m.parts).find((x) => x.type === "tool" && x.tool === "bash") : undefined
@@ -327,15 +338,17 @@ async function steps(projectId: string, slug: string, root: string) {
 
   await turn(projectId, async () => (await status(id)) !== "in-progress", 120_000)
   let c = await step(s3.id)
-  check("step 1.3: the verify fails → step and task blocked", c.status === "blocked" && (await status(id)) === "blocked" && c.verifyOutput.includes("→ exit 1") && c.result.includes("MAW: the verify command failed"), { st: c.status, v: c.verifyOutput.slice(-200) })
+  const j3a = await sjobs(s3.id)
+  check("step 1.3: the verify fails three times (the step, then both repairs) → step and task blocked", c.status === "blocked" && (await status(id)) === "blocked" && j3a.length === 3 && c.repairs === 2
+    && c.verifyOutput.includes("→ exit 1") && c.result.includes("repair 2 of 2 follows.") && c.result.includes("MAW: the verify command failed: ! grep -q BROKEN step-c.txt 2>/dev/null (after 2 repairs)."), { st: c.status, n: j3a.length, r: c.result })
   check("Retry on the task alone does not run a blocked step", (await resumeTask(id)).ok && (await runnerTick(log, projectId)) === "idle" && (await status(id)) === "blocked")
-  check("Try again, with a direction: the step is pending, the task in progress", (await retryStep(s3.id, "fix it")).ok && (await step(s3.id)).status === "pending" && (await status(id)) === "in-progress")
+  check("Try again, with a direction: the step is pending, its repairs given back, the task in progress", (await retryStep(s3.id, "fix it")).ok && (await step(s3.id)).status === "pending" && (await step(s3.id)).repairs === 0 && (await status(id)) === "in-progress")
   await turn(projectId, async () => (await step(s3.id)).status === "done" || (await status(id)) !== "in-progress", 120_000)
   c = await step(s3.id)
   const j3 = await sjobs(s3.id)
-  const m3 = j3[1] ? await ocMessages(workspacePath(slug), j3[1].sessionId) : null
+  const m3 = j3[3] ? await ocMessages(workspacePath(slug), j3[3].sessionId) : null
   check("a step marked deploy: deployed after its verify", c.status === "done" && c.deployOutput.includes("echo deployed"))
-  check("…the second session reads the verify output and your direction, and fixes it", c.status === "done" && m3?.ok === true && userText(m3.data).includes("fix what failed") && userText(m3.data).includes("Developer: fix it"), c.status)
+  check("…the second session reads the verify output and your direction, and fixes it", c.status === "done" && m3?.ok === true && userText(m3.data).includes("## What failed after the last session") && userText(m3.data).includes("Developer: fix it") && c.repairReason === "", c.status)
 
   await turn(projectId, async () => (await status(id)) !== "in-progress", 120_000)
   const d = await step(s4.id)

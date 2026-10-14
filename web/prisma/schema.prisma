@@ -340,6 +340,10 @@ model TaskStep {
   // git status and git diff of the project after the step (uncommitted changes)
   diff         String     @default("")
   deployOutput String     @default("")
+  // Sessions MAW ran on its own after a failed verify or deploy (reset by your Try again,
+  // Doesn't work and Reopen), and what the next session must fix (cleared when it passes)
+  repairs      Int        @default(0)
+  repairReason String     @default("")
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
   jobs         TaskJob[]
